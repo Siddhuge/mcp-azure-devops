@@ -1,0 +1,15 @@
+{
+  "name": "analyze_azure_pipeline",
+  "description": "Analyze Azure DevOps pipeline failure and suggest fix",
+  "input_schema": {
+    "type": "object",
+    "properties": {
+      "buildId": {
+        "type": "string",
+        "description": "Azure DevOps build ID"
+      }
+    },
+    "required": ["buildId"]
+  },
+  "endpoint": "http://localhost:4000/logs/{buildId}/classify"
+}
