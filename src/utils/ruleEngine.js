@@ -82,6 +82,18 @@ export const rules = [
     fix: "A step lacks filesystem/privilege access. Install tools to a writable path (e.g. $HOME/.local/bin or the agent tool cache), run the step with sufficient privileges (sudo), or fix ownership on the target path.",
   },
   {
+    name: "AZURE_RBAC",
+    // Azure Resource Manager RBAC denials (distinct from credential auth) — the
+    // identity authenticated fine but lacks a role for the action/scope.
+    pattern:
+      /authorizationfailed|does not have authorization to perform action|is not authorized to perform|does not have permission to perform|insufficient privileges to complete|requestdisallowedbypolicy|\bRBAC\b/i,
+    failureType: "AZURE_RBAC_DENIED",
+    severity: "HIGH",
+    priority: 87,
+    confidence: 0.9,
+    fix: "The identity (service principal / managed identity) lacks the required Azure RBAC role for the action and scope named in the error. Assign the appropriate role (e.g. AcrPush for ACR push, or a role granting the listed action) on that resource/scope, then re-run; if access was just granted, allow propagation or refresh credentials.",
+  },
+  {
     name: "AUTH_CREDENTIAL",
     // Credential/identity denials only — `permission denied` is handled by FS_PERMISSION first.
     pattern: /unauthorized|forbidden|\b401\b|\b403\b|invalid credentials|authentication failed|access denied|not authorized/i,

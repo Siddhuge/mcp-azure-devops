@@ -55,6 +55,13 @@ describe("ruleEngine", () => {
     expect(match.rule.failureType).toBe("FS_PERMISSION");
   });
 
+  it("classifies an Azure RBAC denial distinctly from credential auth (build 318)", () => {
+    const line =
+      "ERROR: Failed to get a SAS URL. Error: (AuthorizationFailed) The client 'fb732c77' does not have authorization to perform action 'Microsoft.ContainerRegistry/registries/listBuildSourceUploadUrl/action' over scope '.../registries/acrcanarypoc'";
+    const match = runRules([line], []);
+    expect(match.rule.failureType).toBe("AZURE_RBAC_DENIED");
+  });
+
   it("still classifies ACR/credential denials as AUTH_FAILURE (builds 306/315)", () => {
     const match = runRules(
       ["* remote error: GET https://acr.azurecr.io/oauth2/token: UNAUTHORIZED: authentication required"],
