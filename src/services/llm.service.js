@@ -85,7 +85,8 @@ export function budgetStatus() {
 }
 
 let _client;
-function client() {
+/** Shared Anthropic client (used by classification and the chat agent). */
+export function getAnthropicClient() {
   if (!_client) _client = new Anthropic({ apiKey: config.llm.apiKey });
   return _client;
 }
@@ -93,6 +94,15 @@ function client() {
 /** Test seam: inject a mock Anthropic client. */
 export function __setClient(mock) {
   _client = mock;
+}
+
+/**
+ * Record LLM spend against the shared monthly budget.
+ * @param {number} usd
+ */
+export function recordSpend(usd) {
+  rolloverIfNeeded();
+  spend.usd += usd;
 }
 
 /** Reset the budget accumulator (tests). */
@@ -128,7 +138,7 @@ function buildPrompt(lines) {
 export async function analyzeWithLlm(filteredLines) {
   rolloverIfNeeded();
   try {
-    const response = await client().messages.create({
+    const response = await getAnthropicClient().messages.create({
       model: config.llm.model,
       max_tokens: MAX_OUTPUT_TOKENS,
       system: [
@@ -139,7 +149,7 @@ export async function analyzeWithLlm(filteredLines) {
     });
 
     const costUsd = estimateCost(response.usage);
-    spend.usd += costUsd;
+    recordSpend(costUsd);
 
     const text = (response.content || [])
       .filter((b) => b.type === "text")

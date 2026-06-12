@@ -21,6 +21,7 @@ WORKDIR /app
 COPY --chown=node:node --from=deps /app/node_modules ./node_modules
 COPY --chown=node:node package.json package-lock.json ./
 COPY --chown=node:node src ./src
+COPY --chown=node:node public ./public
 
 USER node
 EXPOSE 4000

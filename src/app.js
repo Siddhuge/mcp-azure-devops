@@ -11,7 +11,12 @@ import { requireAuth } from "./middleware/auth.js";
 import { rateLimiter } from "./middleware/rateLimiter.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import logsRouter, { buildsRouter, projectsRouter } from "./routes/logs.route.js";
+import { chatRouter } from "./routes/chat.route.js";
 import { createMcpHttpRouter } from "./mcp/http.js";
+import { fileURLToPath } from "node:url";
+import { dirname, join } from "node:path";
+
+const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 import { ping } from "./services/azure.service.js";
 import { budgetStatus } from "./services/llm.service.js";
 
@@ -57,14 +62,23 @@ export function createApp() {
   // ── MCP over Streamable HTTP (bearer auth enforced inside the router) ───────
   app.use("/mcp", createMcpHttpRouter());
 
-  // ── REST API (rate limited + bearer auth) ──────────────────────────────────
+  // ── Chat web UI (static page is public; the /chat API is bearer-protected) ──
+  app.use("/ui", express.static(publicDir));
+
+  // ── REST + chat API (rate limited + bearer auth) ────────────────────────────
   app.use(rateLimiter);
   app.use("/logs", requireAuth, logsRouter);
   app.use("/builds", requireAuth, buildsRouter);
   app.use("/projects", requireAuth, projectsRouter);
+  app.use("/chat", requireAuth, chatRouter);
 
   app.get("/", (_req, res) =>
-    res.json({ name: "mcp-azure-devops", version: "3.0.0", docs: "/readyz, /logs/:id/classify, POST /mcp" }),
+    res.json({
+      name: "mcp-azure-devops",
+      version: "3.0.0",
+      ui: "/ui",
+      docs: "/readyz, /logs/:id/classify, POST /mcp, POST /chat",
+    }),
   );
 
   app.use(errorHandler);

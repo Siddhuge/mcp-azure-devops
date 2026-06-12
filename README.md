@@ -123,6 +123,38 @@ curl -H "Authorization: Bearer <your-api-token>" http://localhost:4000/projects 
 
 ---
 
+## Web chat UI
+
+A built-in chat window lets you ask the same questions in a browser — no external
+MCP client needed. Start the HTTP server (or container) and open:
+
+```
+http://localhost:4000/ui
+```
+
+On first use it asks for your API token (one of `API_TOKENS`) and remembers it in the
+browser. Then just type natural language:
+
+- *"list my projects"*
+- *"show recent failed builds in AzureBlueGreen"*
+- *"analyze build 318 in AzureCanary and tell me the fix"*
+
+Under the hood, a small **agent** (Claude Haiku 4.5, via the `POST /chat` endpoint) runs
+a tool-use loop over the same functions as the MCP tools. It reuses your
+`ANTHROPIC_API_KEY` and the shared `LLM_MONTHLY_BUDGET_USD` cap, and each turn costs a
+fraction of a cent (~$0.004). Requires `LLM_ENABLED=true`; otherwise `/chat` returns a
+clear message and the rest of the server (rules-based REST/MCP) still works.
+
+```bash
+# Same thing via the API:
+curl -s -X POST http://localhost:4000/chat \
+  -H "Authorization: Bearer <your-api-token>" -H "content-type: application/json" \
+  -d '{"messages":[{"role":"user","content":"list my projects"}]}' | jq
+# → { "reply": "...", "toolCalls": [{"name":"list_projects",...}], "costUsd": 0.004 }
+```
+
+---
+
 ## MCP tools
 
 All build tools accept an optional `project` (defaults to `AZURE_PROJECT`).

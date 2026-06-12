@@ -47,3 +47,4 @@ coverage/
 # Node PM2
 ecosystem-error.log
 ecosystem-out.log
+.mcp.json
