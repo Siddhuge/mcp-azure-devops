@@ -62,6 +62,20 @@ describe("chatAgent.runChat", () => {
     expect(out.reply).toContain("memory");
   });
 
+  it("degrades gracefully (friendly reply, no leak) when the LLM call throws", async () => {
+    __setClient({
+      messages: {
+        create: async () => {
+          throw new Error("invalid x-api-key (raw provider detail)");
+        },
+      },
+    });
+    const out = await runChat([{ role: "user", content: "list my projects" }]);
+    expect(out.reply).toMatch(/^⚠/); // friendly, not a thrown 500
+    expect(out.reply).not.toMatch(/x-api-key/); // raw provider detail not leaked
+    expect(out.toolCalls).toHaveLength(0);
+  });
+
   it("pauses when the monthly budget is exceeded", async () => {
     // No client/azure mocks needed — should short-circuit before any call.
     const big = 1e9;

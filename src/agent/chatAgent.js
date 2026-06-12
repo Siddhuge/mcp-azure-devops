@@ -1,5 +1,7 @@
+import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
+import { scrubSecrets } from "../config/redact.js";
 import { analyzeBuild } from "../analyzer/index.js";
 import {
   listProjects,
@@ -179,13 +181,32 @@ export async function runChat(history) {
   let costUsd = 0;
 
   for (let i = 0; i < MAX_ITERATIONS; i++) {
-    const response = await client.messages.create({
-      model: config.llm.model,
-      max_tokens: MAX_OUTPUT_TOKENS,
-      system: SYSTEM_PROMPT,
-      tools: TOOLS,
-      messages,
-    });
+    let response;
+    try {
+      response = await client.messages.create({
+        model: config.llm.model,
+        max_tokens: MAX_OUTPUT_TOKENS,
+        system: SYSTEM_PROMPT,
+        tools: TOOLS,
+        messages,
+      });
+    } catch (err) {
+      // Never leak the provider's raw error to the browser; return a friendly,
+      // in-chat message so the UI shows it like any other reply.
+      if (err instanceof Anthropic.AuthenticationError) {
+        log.error("anthropic auth rejected (check ANTHROPIC_API_KEY)");
+        return { reply: "⚠ The Anthropic API key was rejected (invalid x-api-key). Update ANTHROPIC_API_KEY and try again.", toolCalls, costUsd };
+      }
+      if (err instanceof Anthropic.RateLimitError) {
+        return { reply: "⚠ Anthropic is rate-limiting requests right now. Please retry in a moment.", toolCalls, costUsd };
+      }
+      if (err instanceof Anthropic.APIError) {
+        log.warn({ status: err.status }, "anthropic api error in chat");
+        return { reply: `⚠ The LLM request failed (HTTP ${err.status}). Please try again.`, toolCalls, costUsd };
+      }
+      log.error({ message: scrubSecrets(String(err?.message || err)) }, "chat agent error");
+      return { reply: "⚠ Something went wrong handling that request. Please try again.", toolCalls, costUsd };
+    }
     const turnCost = estimateCost(response.usage);
     costUsd += turnCost;
     recordSpend(turnCost);
