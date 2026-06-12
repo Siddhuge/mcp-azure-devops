@@ -1,0 +1,16 @@
+services:
+  mcp-azure-devops:
+    build: .
+    ports:
+      - "4000:4000"
+    environment:
+      NODE_ENV: production
+      PORT: "4000"
+      AZURE_ORG: ${AZURE_ORG}
+      AZURE_PROJECT: ${AZURE_PROJECT}
+      AZURE_PAT: ${AZURE_PAT}
+      API_TOKENS: ${API_TOKENS}
+      LLM_ENABLED: ${LLM_ENABLED:-false}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      LLM_MONTHLY_BUDGET_USD: ${LLM_MONTHLY_BUDGET_USD:-25}
+    restart: unless-stopped

@@ -1,34 +1,72 @@
-const express = require("express");
-const helmet = require("helmet");
-const cors = require("cors");
-const pinoHttp = require("pino-http");
+import express from "express";
+import helmet from "helmet";
+import cors from "cors";
+import pinoHttp from "pino-http";
 
-const logger = require("./config/logger");
-const requestId = require("./middleware/requestId");
-const errorHandler = require("./middleware/errorHandler");
-const rateLimiter = require("./middleware/rateLimiter");
+import { config } from "./config/env.js";
+import { logger } from "./config/logger.js";
+import { redactPaths } from "./config/redact.js";
+import { requestId } from "./middleware/requestId.js";
+import { requireAuth } from "./middleware/auth.js";
+import { rateLimiter } from "./middleware/rateLimiter.js";
+import { errorHandler } from "./middleware/errorHandler.js";
+import logsRouter, { buildsRouter, projectsRouter } from "./routes/logs.route.js";
+import { createMcpHttpRouter } from "./mcp/http.js";
+import { ping } from "./services/azure.service.js";
+import { budgetStatus } from "./services/llm.service.js";
 
-const logsRoute = require("./routes/logs.route");
+/**
+ * Build the Express application. Kept free of side effects (no listen) so it can
+ * be imported directly in tests with supertest.
+ * @returns {import("express").Express}
+ */
+export function createApp() {
+  const app = express();
+  app.disable("x-powered-by");
 
-const app = express();
+  app.use(helmet());
+  app.use(cors({ origin: config.isProduction ? false : true }));
+  app.use(express.json({ limit: "1mb" }));
+  app.use(requestId);
+  app.use(
+    pinoHttp({
+      logger,
+      genReqId: (req) => req.id,
+      redact: { paths: redactPaths, censor: "[REDACTED]" },
+    }),
+  );
 
-app.use(helmet());
-app.use(cors({ origin: ["http://localhost:3000"] }));
-app.use(express.json());
+  // ── Public health/readiness probes (no auth, no rate limit) ────────────────
+  app.get("/healthz", (_req, res) => res.json({ status: "ok", uptime: process.uptime() }));
 
-app.use(requestId);
-app.use(pinoHttp({ logger }));
+  app.get("/readyz", async (_req, res) => {
+    const checks = { config: "ok", azure: "unknown" };
+    try {
+      await ping();
+      checks.azure = "ok";
+      res.json({ status: "ready", checks, llm: budgetStatus() });
+    } catch (err) {
+      checks.azure = "error";
+      logger.warn({ err: { message: err.message } }, "readiness check failed");
+      res.status(503).json({ status: "not_ready", checks });
+    }
+  });
 
-app.use(rateLimiter);
+  // ── MCP over Streamable HTTP (bearer auth enforced inside the router) ───────
+  app.use("/mcp", createMcpHttpRouter());
 
-app.get("/health", (req, res) => res.json({ status: "ok" }));
+  // ── REST API (rate limited + bearer auth) ──────────────────────────────────
+  app.use(rateLimiter);
+  app.use("/logs", requireAuth, logsRouter);
+  app.use("/builds", requireAuth, buildsRouter);
+  app.use("/projects", requireAuth, projectsRouter);
 
-app.use("/logs", logsRoute);
+  app.get("/", (_req, res) =>
+    res.json({ name: "mcp-azure-devops", version: "3.0.0", docs: "/readyz, /logs/:id/classify, POST /mcp" }),
+  );
 
-app.get("/", (req, res) => {
-  res.send("MCP Azure DevOps Server Running");
-});
+  app.use(errorHandler);
+  return app;
+}
 
-app.use(errorHandler);
-
-module.exports = app;
+export default createApp;

@@ -1,299 +1,215 @@
-# MCP Azure DevOps - Pipeline Failure Analyzer
+# MCP Azure DevOps — Pipeline Failure Analyzer
 
-A **Model Context Protocol (MCP) Server** that analyzes Azure DevOps pipeline failures and provides intelligent root cause analysis with actionable fix suggestions.
+A **Model Context Protocol (MCP) server** that analyzes Azure DevOps pipeline failures and
+returns a structured root cause, fix, and severity. It classifies failures **cheaply** — a
+deterministic rule engine and a result cache handle the common cases for free, and it only
+escalates to an LLM (Claude Haiku) when the rules can't confidently explain the failure.
 
-## 🎯 Overview
+> This is a real MCP server (speaks the protocol over **stdio** and **Streamable HTTP**),
+> plus an optional REST gateway for non-MCP consumers (dashboards, curl, CI webhooks).
 
-This project connects to Azure DevOps, retrieves build logs, and uses a sophisticated **rule engine** to classify pipeline failures. It helps teams quickly identify what went wrong in their CI/CD pipelines and get recommendations on how to fix them.
+---
 
-### Key Features
-- **Real-time Pipeline Analysis**: Fetch and analyze logs from Azure DevOps builds
-- **Intelligent Failure Classification**: Rule-based detection of common failure patterns
-- **Actionable Fix Suggestions**: Get specific recommendations based on failure type
-- **High Performance**: Retry logic and efficient log filtering
-- **Secure**: PAT-based authentication with Azure DevOps
-- **Production-Ready**: Error handling, rate limiting, and request ID tracking
+## How classification works (the cost model)
 
-## 📋 What It Does
+```
+analyze_pipeline_failure(buildId)
+        │
+        ▼
+  fetch + filter logs
+        │
+  ┌─────────────────────────── Tier 1: Rule engine ──────────────┐  cost: $0
+  │ regex rules → confident match? → return (source: RULE_ENGINE) │
+  └───────────────────────────────────────────────────────────────┘
+        │ (no/low-confidence match)
+  ┌─────────────────────────── Tier 2: Result cache ─────────────┐  cost: $0
+  │ SHA-256 of normalized log lines → hit? → return (CACHE)        │
+  └───────────────────────────────────────────────────────────────┘
+        │ (miss)
+  ┌─────────────────────────── Tier 3: Claude Haiku ─────────────┐  cost: small, capped
+  │ truncated+deduped lines → structured JSON → return (LLM)       │
+  │ skipped when LLM_ENABLED=false, no key, or budget exceeded     │
+  └───────────────────────────────────────────────────────────────┘
+```
 
-### 1. **Log Retrieval**
-Connects to Azure DevOps API to fetch build logs for a specific build ID.
+**Why it's cost-effective**
+- Most CI failures (Docker rate limits, OOM, npm/test/compile errors, timeouts) are caught
+  by the **free** rule engine — no tokens spent.
+- Identical failures across pipeline re-runs hit the **cache** (the key normalizes away
+  timestamps/GUIDs/line numbers), so repeats cost nothing.
+- When the LLM does run, it gets only the **deduped, filtered, truncated** error lines —
+  never full logs — with a small `max_tokens` and a [structured-output schema](src/services/llm.service.js)
+  so there's no parsing/repair round-trip.
+- A soft **monthly budget** (`LLM_MONTHLY_BUDGET_USD`) short-circuits the LLM tier once spend
+  is exceeded; classification degrades gracefully to the rule engine instead of failing.
 
-### 2. **Log Parsing & Filtering**
-Extracts error messages, warnings, and failures from raw logs:
-- Filters lines containing: `error`, `failed`, `exception`, `warning`, `toomanyrequests`
+---
 
-### 3. **Rule Engine Classification**
-Matches filtered logs against predefined rules to identify failure types:
-- **DOCKER_RATE_LIMIT**: Docker Hub rate limit exceeded
-- **DOCKER_FAILURE**: Docker build or pull failures
-- **BUILD_FAILURE**: Compilation/build errors
-- **CONFIG_DEPRECATED**: Deprecated configuration warnings
-- *And more...*
+## Quick start
 
-### 4. **Failure Analysis**
-Returns structured failure analysis:
+```bash
+npm install
+cp .env.example .env   # fill in AZURE_ORG / AZURE_PROJECT / AZURE_PAT
+```
+
+Get an Azure PAT at `dev.azure.com` → User Settings → Personal access tokens → scope **Build (read)**.
+
+### Run as an MCP server (stdio)
+
+```bash
+npm run mcp:stdio
+# or inspect interactively:
+npm run mcp:inspect
+```
+
+Register it with an MCP client (e.g. Claude Desktop / Claude Code) — `mcp.json`:
+
 ```json
 {
-  "failureType": "INFRA_DOCKER_RATE_LIMIT",
-  "rootCause": "You have reached your unauthenticated pull rate limit",
-  "fix": "Authenticate Docker (docker login) or use private registry",
-  "severity": "HIGH",
-  "confidence": 0.95,
-  "source": "RULE_ENGINE"
+  "mcpServers": {
+    "azure-devops": {
+      "command": "node",
+      "args": ["/absolute/path/to/mcp-azure-devops/src/mcp/stdio.js"],
+      "env": {
+        "AZURE_ORG": "your-org",
+        "AZURE_PROJECT": "your-project",
+        "AZURE_PAT": "your-pat",
+        "LLM_ENABLED": "false"
+      }
+    }
+  }
 }
 ```
 
-## 🏗️ Project Structure
+### Run as an HTTP service (MCP-over-HTTP + REST)
 
-```
-src/
-├── app.js                    # Express app setup
-├── server.js               # Server entry point
-├── config/
-│   ├── env.js             # Environment validation with Joi
-│   └── logger.js          # Pino logger configuration
-├── controllers/
-│   └── logs.controller.js # Request handlers
-├── middleware/
-│   ├── auth.js            # Authentication middleware
-│   ├── errorHandler.js    # Global error handler
-│   ├── rateLimiter.js     # Rate limiting
-│   └── requestId.js       # Request ID tracking
-├── routes/
-│   └── logs.route.js      # API routes
-├── services/
-│   ├── azure.service.js   # Azure DevOps API integration
-│   └── classifier.service.js # Failure classification logic
-├── schemas/
-│   └── logs.schema.js     # Joi validation schemas
-└── utils/
-    ├── asyncHandler.js    # Async error wrapper
-    ├── errors.js          # Custom error classes
-    ├── logParser.js       # Log parsing utility
-    └── ruleEngine.js      # Failure detection rules
-```
-
-## 🚀 Getting Started
-
-### Prerequisites
-- Node.js 14+
-- Azure DevOps Organization & Project
-- Azure Personal Access Token (PAT)
-
-### Installation
-
-1. **Clone the repository**
-```bash
-git clone <repository-url>
-cd mcp-azure-devops
-```
-
-2. **Install dependencies**
-```bash
-npm install
-```
-
-3. **Configure environment variables**
-Create a `.env` file in the root directory:
-```env
-PORT=4000
-AZURE_ORG=your-organization
-AZURE_PROJECT=your-project
-AZURE_PAT=your-personal-access-token
-```
-
-**How to get Azure PAT:**
-1. Go to https://dev.azure.com
-2. User Settings → Personal access tokens → New Token
-3. Select scopes: `Build (read)`, `Code (read)`
-
-4. **Start the server**
 ```bash
 npm start
 ```
 
-For development with auto-reload:
+- **MCP over Streamable HTTP:** `POST http://localhost:4000/mcp` (bearer auth)
+- **REST:** `GET /logs/:buildId/classify`, `GET /logs/:buildId`, `GET /logs/:buildId/logs/:logId`, `GET /builds`, `GET /projects`
+- **Probes:** `GET /healthz` (liveness), `GET /readyz` (checks config + Azure reachability)
+
 ```bash
-npm run dev
+# Default project (AZURE_PROJECT)
+curl -H "Authorization: Bearer <your-api-token>" \
+  http://localhost:4000/logs/99/classify | jq
+
+# Any project in the org — add ?project=
+curl -H "Authorization: Bearer <your-api-token>" \
+  "http://localhost:4000/logs/308/classify?project=AzureCanary" | jq
+
+# Discover project names
+curl -H "Authorization: Bearer <your-api-token>" http://localhost:4000/projects | jq
 ```
 
-## 📡 API Endpoints
+> **Org-level:** Azure build IDs are unique *per project*. The server is scoped to
+> the **organization** (`AZURE_ORG`), so any route or MCP tool accepts an optional
+> `project` — pass it to target any project in the org, or omit it to use the
+> `AZURE_PROJECT` default.
 
-### Get Build Logs Metadata
-```
-GET /logs/:buildId
-```
-Returns metadata for all logs in a build.
-
-### Get Raw Log Content
-```
-GET /logs/:buildId/:logId
-```
-Returns raw log file content.
-
-### Analyze & Classify Failure
-```
-GET /logs/:buildId/classify
-```
-Analyzes the build and returns failure classification with fix suggestions.
-
-**Example:**
-```bash
-curl http://localhost:4000/logs/99/classify
-```
-
-**Response:**
 ```json
 {
   "failureType": "INFRA_DOCKER_RATE_LIMIT",
-  "rootCause": "You have reached your unauthenticated pull rate limit",
-  "fix": "Authenticate Docker (docker login) or use private registry",
+  "rootCause": "##[error]toomanyrequests: You have reached your pull rate limit",
+  "fix": "Authenticate to Docker Hub (docker login) or pull from a private/mirrored registry.",
   "severity": "HIGH",
   "confidence": 0.95,
   "source": "RULE_ENGINE",
-  "totalLines": 1088,
-  "filteredLines": 59
+  "meta": { "totalLines": 1088, "filteredLines": 59 }
 }
 ```
 
-### Health Check
-```
-GET /health
-```
-Returns server health status.
+---
 
-## 🔧 Configuration
+## MCP tools
 
-### Environment Variables
-| Variable | Required | Description |
-|----------|----------|-------------|
-| `PORT` | No | Server port (default: 4000) |
-| `AZURE_ORG` | **Yes** | Azure DevOps organization name |
-| `AZURE_PROJECT` | **Yes** | Azure DevOps project name |
-| `AZURE_PAT` | **Yes** | Personal Access Token for authentication |
+All build tools accept an optional `project` (defaults to `AZURE_PROJECT`).
 
-### Rule Engine Rules
-Customize failure detection in [`src/utils/ruleEngine.js`](src/utils/ruleEngine.js):
+| Tool | Input | Returns |
+|------|-------|---------|
+| `analyze_pipeline_failure` | `buildId`, `project?` | Tiered classification (root cause, fix, severity, `source`, `confidence`) |
+| `get_build_logs` | `buildId`, `project?` | Log file metadata for the build |
+| `get_log_content` | `buildId`, `logId`, `project?` | Raw lines of one log file |
+| `list_recent_builds` | `top?`, `resultFilter?`, `project?` | Recent builds (to discover failing IDs) |
+| `list_projects` | — | All projects in the organization |
 
-```javascript
-{
-  name: "RULE_NAME",
-  pattern: /regex-pattern/i,
-  failureType: "FAILURE_TYPE",
-  severity: "HIGH|MEDIUM|LOW",
-  priority: 100,  // Higher = checked first
-  fix: "Suggested fix"
-}
-```
+---
 
-## 🔐 Security Features
+## Configuration
 
-- **Rate Limiting**: Prevents abuse with express-rate-limit
-- **Helmet.js**: Sets security HTTP headers
-- **CORS**: Configured for localhost (port 3000)
-- **PAT Authentication**: Secure Azure DevOps authentication
-- **Request ID Tracking**: Unique ID per request for tracing
-- **Environment Validation**: Joi schema validation on startup
+| Variable | Required | Default | Description |
+|----------|----------|---------|-------------|
+| `AZURE_ORG` | ✅ | — | Azure DevOps organization |
+| `AZURE_PROJECT` | | _(empty)_ | **Default** project; any request may override via `project`. If empty, `project` is required per-request. |
+| `AZURE_PAT` | ✅ | — | PAT with **Build (read)** (+ **Project and Team (read)** for `/projects`) |
+| `PORT` | | `4000` | HTTP port |
+| `API_TOKENS` | | _(empty)_ | Comma-separated bearer tokens for REST/MCP-HTTP. **Empty disables auth — dev only.** |
+| `LLM_ENABLED` | | `false` | Enable the Claude Haiku tier |
+| `ANTHROPIC_API_KEY` | when LLM on | — | Anthropic API key |
+| `LLM_MODEL` | | `claude-haiku-4-5` | Model id |
+| `LLM_MAX_INPUT_LINES` | | `120` | Cap on log lines sent to the model |
+| `LLM_MONTHLY_BUDGET_USD` | | `25` | Soft monthly spend ceiling |
+| `CACHE_MAX_ENTRIES` / `CACHE_TTL_SECONDS` | | `500` / `3600` | Result cache sizing |
+| `LOG_LEVEL` | | `info` | Pino log level |
 
-## 📊 Middleware Stack
+---
 
-- **helmet**: HTTP header security
-- **cors**: Cross-Origin Resource Sharing
-- **express.json**: JSON parsing
-- **requestId**: Request ID middleware
-- **pinoHttp**: HTTP request logging
-- **rateLimiter**: Rate limiting
-- **errorHandler**: Centralized error handling
+## Security
 
-## 🛠️ Development
+- **Bearer auth** on all REST and MCP-HTTP routes (`API_TOKENS`), constant-time compared. Health probes stay public.
+- **Secret redaction** — Azure PAT and Anthropic key are stripped from logs and error messages.
+- **Helmet**, **CORS** (locked down in production), **rate limiting**, per-request IDs.
+- **Bounded retries** with exponential backoff + jitter on Azure calls; only transient `429`/`5xx`/network errors retry, never `401`/`404`.
+- `.env` is gitignored. **Never commit a PAT.** Run as the non-root `node` user in Docker.
 
-### Available Scripts
+---
+
+## Development
 
 ```bash
-npm start    # Start production server
-npm run dev  # Start with nodemon (auto-reload)
+npm run dev          # watch-mode HTTP server
+npm test             # vitest unit + integration
+npm run test:coverage
+npm run lint
+npm run format
 ```
 
-### Testing the Classifier
+### Adding a rule
+Append a rule object to [`src/utils/ruleEngine.js`](src/utils/ruleEngine.js) (higher `priority`
+is checked first; set a `confidence` ≥ 0.6 to win outright, lower to let the LLM tier refine).
 
-1. Get a build ID from your Azure DevOps project
-2. Test the endpoint:
+---
+
+## Docker
+
 ```bash
-curl http://localhost:4000/logs/99/classify | python3 -m json.tool
+docker build -t mcp-azure-devops .
+docker run --rm -p 4000:4000 --env-file .env mcp-azure-devops
+# or:
+docker compose up --build
 ```
 
-### Adding New Rules
-1. Open [`src/utils/ruleEngine.js`](src/utils/ruleEngine.js)
-2. Add a new rule object to the `rules` array
-3. Restart the server
+The image runs as a non-root user with a `/healthz` `HEALTHCHECK`. SIGTERM drains the server gracefully.
 
-## 📚 Dependencies
+---
 
-- **express**: Web framework
-- **axios**: HTTP client for Azure API
-- **joi**: Schema validation
-- **pino**: Logging
-- **helmet**: Security headers
-- **cors**: CORS handling
-- **express-rate-limit**: Rate limiting
-- **dotenv**: Environment variable loading
+## Architecture
 
-## 🐛 Error Handling
+```
+src/
+├── mcp/            MCP server + stdio and Streamable-HTTP transports
+├── analyzer/       Tiered classification orchestrator (rules → cache → LLM)
+├── services/       azure.service (Build API), llm.service (Claude Haiku)
+├── utils/          ruleEngine, logParser, cache, errors
+├── middleware/     auth, rateLimiter, requestId, errorHandler
+├── routes/ controllers/ schemas/   REST gateway
+├── config/         env (Joi), logger (Pino), redact
+├── app.js          Express app factory
+└── server.js       HTTP entrypoint + graceful shutdown
+```
 
-The application includes comprehensive error handling:
-
-- **400**: Bad Request (missing buildId)
-- **401**: Authentication errors (invalid PAT)
-- **404**: Build or log not found
-- **429**: Rate limit exceeded
-- **500**: Server error with request ID for tracing
-
-All errors are logged with unique request IDs for debugging.
-
-## 🎯 Common Failure Types
-
-| Type | Cause | Fix |
-|------|-------|-----|
-| `INFRA_DOCKER_RATE_LIMIT` | Docker Hub pull limit | Authenticate or use private registry |
-| `INFRA_DOCKER_FAILURE` | Docker build/pull failed | Check Docker logs |
-| `BUILD_FAILURE` | Compilation error | Fix code errors |
-| `CONFIG_DEPRECATED` | Deprecated settings | Update configuration |
-
-## 📖 MCP (Model Context Protocol)
-
-This server implements the Model Context Protocol, enabling AI models and tools to:
-- Query pipeline status
-- Analyze build failures
-- Suggest fixes automatically
-- Integrate with CI/CD workflows
-
-Tool definition: [`.mcp/tools/azureLogs.json`](.mcp/tools/azureLogs.json)
-
-## 🚨 Troubleshooting
-
-### Error: "buildId required"
-Ensure you're passing the buildId in the URL: `/logs/99/classify`
-
-### Error: "Azure returned HTML → auth issue"
-- Verify `AZURE_PAT` is correct in `.env`
-- Check PAT has `Build (read)` scope
-- Verify `AZURE_ORG` and `AZURE_PROJECT` names
-
-### 429 Too Many Requests
-The server has rate limiting enabled. Wait before retrying.
-
-### Logs show "FALLBACK" source
-No matching rules found. Add new rule pattern to catch this error type.
-
-## 📝 License
+## License
 
 MIT
-
-## 👤 Author
-
-Built as an MCP server for Azure DevOps pipeline analysis and debugging.
-
-## 📬 Support
-
-For issues and feature requests, please check the project repository.
