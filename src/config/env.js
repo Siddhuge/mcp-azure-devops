@@ -23,6 +23,10 @@ const schema = Joi.object({
   // HTTP
   PORT: Joi.number().port().default(4000),
   API_TOKENS: csv.default([]),
+  // Number of trusted reverse-proxy hops (Express `trust proxy`). Set to the
+  // count of proxies/load balancers in front of the app so client IPs and
+  // rate-limiting work correctly. 0 = don't trust any proxy.
+  TRUST_PROXY: Joi.number().integer().min(0).default(0),
 
   // Azure DevOps
   AZURE_ORG: Joi.string().required(),
@@ -74,6 +78,7 @@ export const config = Object.freeze({
   logLevel: value.LOG_LEVEL,
   port: value.PORT,
   apiTokens: value.API_TOKENS,
+  trustProxy: value.TRUST_PROXY,
   azure: Object.freeze({
     org: value.AZURE_ORG,
     defaultProject: value.AZURE_PROJECT,

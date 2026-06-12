@@ -146,6 +146,7 @@ All build tools accept an optional `project` (defaults to `AZURE_PROJECT`).
 | `AZURE_PAT` | ✅ | — | PAT with **Build (read)** (+ **Project and Team (read)** for `/projects`) |
 | `PORT` | | `4000` | HTTP port |
 | `API_TOKENS` | | _(empty)_ | Comma-separated bearer tokens for REST/MCP-HTTP. **Empty disables auth — dev only.** |
+| `TRUST_PROXY` | | `0` | Trusted reverse-proxy hops (set ≥1 behind an ingress/LB) |
 | `LLM_ENABLED` | | `false` | Enable the Claude Haiku tier |
 | `ANTHROPIC_API_KEY` | when LLM on | — | Anthropic API key |
 | `LLM_MODEL` | | `claude-haiku-4-5` | Model id |
@@ -182,16 +183,68 @@ is checked first; set a `confidence` ≥ 0.6 to win outright, lower to let the L
 
 ---
 
-## Docker
+## Run as a containerized MCP server
+
+The image is production-hardened: multi-stage build, `npm ci` from a committed
+lockfile (no install scripts), **non-root** user, **tini** as PID 1 (clean
+SIGTERM), a `/healthz` `HEALTHCHECK`, read-only rootfs and `no-new-privileges`
+in compose.
 
 ```bash
 docker build -t mcp-azure-devops .
-docker run --rm -p 4000:4000 --env-file .env mcp-azure-devops
-# or:
-docker compose up --build
+
+# Run as the MCP server (Streamable HTTP at /mcp) + REST gateway
+docker run -d --name mcp-azure-devops \
+  --env-file .env \
+  -e API_TOKENS=$(openssl rand -hex 16) \
+  -p 4000:4000 mcp-azure-devops
+
+# or, with compose (reads .env):
+docker compose up -d --build
 ```
 
-The image runs as a non-root user with a `/healthz` `HEALTHCHECK`. SIGTERM drains the server gracefully.
+Verify it's up and speaking MCP:
+
+```bash
+curl -s http://localhost:4000/healthz                 # {"status":"ok",...}
+curl -s -o /dev/null -w "%{http_code}\n" -X POST http://localhost:4000/mcp   # 401 (auth required)
+```
+
+### Connect an MCP client
+
+**Option 1 — HTTP transport (recommended for a running container).** Point your
+MCP client at the container's `/mcp` endpoint with a bearer token:
+
+```json
+{
+  "mcpServers": {
+    "azure-devops": {
+      "type": "http",
+      "url": "http://localhost:4000/mcp",
+      "headers": { "Authorization": "Bearer <your-API_TOKENS-value>" }
+    }
+  }
+}
+```
+
+**Option 2 — stdio transport (client launches the container per session).** No
+ports or auth needed; the client runs the container with `-i` and talks over
+stdio:
+
+```json
+{
+  "mcpServers": {
+    "azure-devops": {
+      "command": "docker",
+      "args": ["run", "-i", "--rm", "--env-file", "/abs/path/to/.env",
+               "mcp-azure-devops", "node", "src/mcp/stdio.js"]
+    }
+  }
+}
+```
+
+> Behind a reverse proxy / ingress, set `TRUST_PROXY` to the number of proxy hops
+> so client IPs and rate-limiting are correct.
 
 ---
 

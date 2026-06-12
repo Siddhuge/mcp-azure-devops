@@ -23,6 +23,8 @@ import { budgetStatus } from "./services/llm.service.js";
 export function createApp() {
   const app = express();
   app.disable("x-powered-by");
+  // Trust N reverse-proxy hops so req.ip / rate-limiting use the real client IP.
+  if (config.trustProxy > 0) app.set("trust proxy", config.trustProxy);
 
   app.use(helmet());
   app.use(cors({ origin: config.isProduction ? false : true }));
