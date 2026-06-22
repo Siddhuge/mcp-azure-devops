@@ -48,3 +48,6 @@ coverage/
 ecosystem-error.log
 ecosystem-out.log
 .mcp.json
+
+# Claude Code local settings
+.claude/

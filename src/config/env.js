@@ -41,6 +41,9 @@ const schema = Joi.object({
   LLM_MODEL: Joi.string().default("claude-haiku-4-5"),
   LLM_MAX_INPUT_LINES: Joi.number().integer().min(10).max(1000).default(120),
   LLM_MONTHLY_BUDGET_USD: Joi.number().min(0).default(25),
+  // Redact secrets/PII (GUIDs, IPs, tokens, emails) from log content before it
+  // is sent to the LLM. On by default — disable only if egress is acceptable.
+  LLM_REDACT_INPUT: Joi.boolean().default(true),
 
   // Cache
   CACHE_MAX_ENTRIES: Joi.number().integer().min(1).default(500),
@@ -90,6 +93,7 @@ export const config = Object.freeze({
     model: value.LLM_MODEL,
     maxInputLines: value.LLM_MAX_INPUT_LINES,
     monthlyBudgetUsd: value.LLM_MONTHLY_BUDGET_USD,
+    redactInput: value.LLM_REDACT_INPUT,
   }),
   cache: Object.freeze({
     maxEntries: value.CACHE_MAX_ENTRIES,

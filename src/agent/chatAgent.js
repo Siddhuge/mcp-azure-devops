@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { scrubSecrets } from "../config/redact.js";
+import { redactSensitive } from "../utils/scrub.js";
 import { analyzeBuild } from "../analyzer/index.js";
 import {
   listProjects,
@@ -152,11 +153,12 @@ async function executeTool(name, input = {}) {
 }
 
 function ok(data) {
-  const text = JSON.stringify(data);
-  return {
-    text: text.length > MAX_TOOL_RESULT_CHARS ? text.slice(0, MAX_TOOL_RESULT_CHARS) + "…(truncated)" : text,
-    isError: false,
-  };
+  let text = JSON.stringify(data);
+  if (text.length > MAX_TOOL_RESULT_CHARS) text = text.slice(0, MAX_TOOL_RESULT_CHARS) + "…(truncated)";
+  // Tool results carry Azure data (IDs, IPs, tokens) — redact before the model
+  // (a third party) sees them, unless egress redaction is disabled.
+  if (config.llm.redactInput) text = redactSensitive(text);
+  return { text, isError: false };
 }
 
 /**

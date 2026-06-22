@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { scrubSecrets } from "../config/redact.js";
+import { redactLines } from "../utils/scrub.js";
 import { LlmError } from "../utils/errors.js";
 
 const log = logger.child({ module: "llm.service" });
@@ -125,7 +126,10 @@ export function llmAvailable() {
  * @returns {string}
  */
 function buildPrompt(lines) {
-  const capped = lines.slice(0, config.llm.maxInputLines).join("\n").slice(0, MAX_INPUT_CHARS);
+  let selected = lines.slice(0, config.llm.maxInputLines);
+  // Redact secrets/PII before this content leaves for the third-party LLM.
+  if (config.llm.redactInput) selected = redactLines(selected);
+  const capped = selected.join("\n").slice(0, MAX_INPUT_CHARS);
   return `Filtered failure log lines:\n\n${capped}`;
 }
 
