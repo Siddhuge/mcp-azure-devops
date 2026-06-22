@@ -4,6 +4,7 @@ import { logger } from "../config/logger.js";
 import { scrubSecrets } from "../config/redact.js";
 import { redactLines } from "../utils/scrub.js";
 import { getStore } from "../store/index.js";
+import { llmCostTotal } from "../metrics.js";
 import { LlmError } from "../utils/errors.js";
 
 const log = logger.child({ module: "llm.service" });
@@ -99,6 +100,7 @@ export function __setClient(mock) {
  * @returns {Promise<void>}
  */
 export async function recordSpend(usd) {
+  llmCostTotal.inc(usd);
   await store.budgetIncr(currentMonth(), usd);
 }
 

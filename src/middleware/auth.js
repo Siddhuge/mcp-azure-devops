@@ -1,22 +1,43 @@
-import { timingSafeEqual } from "node:crypto";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { config } from "../config/env.js";
+import { logger } from "../config/logger.js";
 import { UnauthorizedError } from "../utils/errors.js";
+import { verifyJwt, looksLikeJwt } from "../auth/oidc.js";
+
+const log = logger.child({ module: "auth" });
 
 /**
- * Constant-time check of a presented token against the configured allowlist.
- * @param {string} presented
- * @returns {boolean}
+ * Parse API_TOKENS entries ("name:secret" or bare "secret") into a name → SHA-256
+ * map. Secrets are hashed at rest; the raw value never lives in memory after boot.
+ * @type {Map<string, string>}  name -> sha256(secret)
  */
-function tokenAllowed(presented) {
-  const a = Buffer.from(presented);
-  return config.apiTokens.some((token) => {
-    const b = Buffer.from(token);
-    return a.length === b.length && timingSafeEqual(a, b);
-  });
+const serviceTokens = new Map();
+for (const entry of config.auth.tokens) {
+  const idx = entry.indexOf(":");
+  const name = idx > 0 ? entry.slice(0, idx) : "default";
+  const secret = idx > 0 ? entry.slice(idx + 1) : entry;
+  if (secret) serviceTokens.set(name, sha256(secret));
+}
+
+const oidcEnabled = config.auth.oidc.enabled;
+export const authConfigured = serviceTokens.size > 0 || oidcEnabled;
+
+if (!authConfigured) {
+  log.warn("no API_TOKENS and no OIDC_ISSUER — auth is DISABLED (dev only)");
+}
+
+function sha256(s) {
+  return createHash("sha256").update(s).digest("hex");
+}
+
+/** Constant-time compare of two equal-length hex digests. */
+function hashEquals(a, b) {
+  const ba = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
 /**
- * Extract a bearer token from an Authorization header value.
  * @param {string|undefined} header
  * @returns {string|null}
  */
@@ -27,17 +48,47 @@ export function extractBearer(header) {
 }
 
 /**
- * Express bearer-auth middleware. When no API_TOKENS are configured, auth is a
- * no-op (intended for local development only) and a warning is logged at boot.
+ * Match a presented secret against the named service tokens (constant-time).
+ * @param {string} presented
+ * @returns {{ type:"service", id:string } | null}
  */
-export function requireAuth(req, _res, next) {
-  if (config.apiTokens.length === 0) return next();
+function verifyServiceToken(presented) {
+  const hash = sha256(presented);
+  for (const [name, stored] of serviceTokens) {
+    if (hashEquals(hash, stored)) return { type: "service", id: name };
+  }
+  return null;
+}
+
+/**
+ * Express auth middleware. Accepts a named service token OR (when OIDC is
+ * configured) an OIDC/JWT bearer. Attaches `req.auth = { type, id, ... }`.
+ * When nothing is configured, auth is a no-op (dev only).
+ */
+export async function requireAuth(req, _res, next) {
+  if (!authConfigured) {
+    req.auth = { type: "anonymous", id: "anonymous" };
+    return next();
+  }
 
   const token = extractBearer(req.headers.authorization);
-  if (!token || !tokenAllowed(token)) {
+  if (!token) return next(new UnauthorizedError());
+
+  try {
+    // OIDC JWTs are 3-segment; everything else is treated as a service token.
+    if (oidcEnabled && looksLikeJwt(token)) {
+      req.auth = await verifyJwt(token);
+      return next();
+    }
+    const svc = verifyServiceToken(token);
+    if (svc) {
+      req.auth = svc;
+      return next();
+    }
     return next(new UnauthorizedError());
+  } catch (err) {
+    return next(err);
   }
-  return next();
 }
 
 export default requireAuth;

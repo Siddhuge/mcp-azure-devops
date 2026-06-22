@@ -211,7 +211,7 @@ export async function runChat(history) {
     }
     const turnCost = estimateCost(response.usage);
     costUsd += turnCost;
-    recordSpend(turnCost);
+    await recordSpend(turnCost);
 
     messages.push({ role: "assistant", content: response.content });
 

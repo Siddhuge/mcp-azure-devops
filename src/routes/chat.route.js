@@ -5,6 +5,7 @@ import { parseOrThrow } from "../schemas/logs.schema.js";
 import { config } from "../config/env.js";
 import { runChat } from "../agent/chatAgent.js";
 import { AppError } from "../utils/errors.js";
+import { audit } from "../audit.js";
 
 const chatBodySchema = z.object({
   messages: z
@@ -32,6 +33,11 @@ chatRouter.post(
     }
     const { messages } = parseOrThrow(chatBodySchema, req.body);
     const result = await runChat(messages);
+    audit(req, {
+      action: "chat",
+      target: { messages: messages.length, tools: result.toolCalls.map((c) => c.name) },
+      costUsd: result.costUsd,
+    });
     res.json(result);
   }),
 );

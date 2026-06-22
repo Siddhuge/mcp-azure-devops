@@ -8,18 +8,29 @@ import { logger } from "./config/logger.js";
 import { redactPaths } from "./config/redact.js";
 import { requestId } from "./middleware/requestId.js";
 import { requireAuth } from "./middleware/auth.js";
-import { rateLimiter } from "./middleware/rateLimiter.js";
+import { rateLimiter, identityLimiter, expensiveLimiter } from "./middleware/rateLimiter.js";
 import { errorHandler } from "./middleware/errorHandler.js";
 import logsRouter, { buildsRouter, projectsRouter } from "./routes/logs.route.js";
 import { chatRouter } from "./routes/chat.route.js";
 import { createMcpHttpRouter } from "./mcp/http.js";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
-
-const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
+import { timingSafeEqual } from "node:crypto";
 import { ping } from "./services/azure.service.js";
 import { budgetStatus } from "./services/llm.service.js";
 import { getStore } from "./store/index.js";
+import {
+  registry,
+  httpRequestDuration,
+  httpRequestsTotal,
+  registerAsyncGauge,
+  routeLabel,
+} from "./metrics.js";
+
+const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
+
+// Spend gauge collected at scrape time from the shared store.
+registerAsyncGauge("llm_spend_usd", "Current-month LLM spend in USD", async () => (await budgetStatus()).usd);
 
 /**
  * Build the Express application. Kept free of side effects (no listen) so it can
@@ -44,8 +55,32 @@ export function createApp() {
     }),
   );
 
+  // ── Metrics instrumentation (records on response finish) ────────────────────
+  app.use((req, res, next) => {
+    const end = httpRequestDuration.startTimer();
+    res.on("finish", () => {
+      const labels = { method: req.method, route: routeLabel(req), status: res.statusCode };
+      end(labels);
+      httpRequestsTotal.inc(labels);
+    });
+    next();
+  });
+
   // ── Public health/readiness probes (no auth, no rate limit) ────────────────
   app.get("/healthz", (_req, res) => res.json({ status: "ok", uptime: process.uptime() }));
+
+  // Prometheus scrape endpoint. Unauthenticated by default (restrict at the
+  // network layer); set METRICS_TOKEN to require a bearer.
+  app.get("/metrics", async (req, res) => {
+    if (config.metricsToken) {
+      const presented = (req.headers.authorization || "").replace(/^Bearer\s+/i, "");
+      const a = Buffer.from(presented);
+      const b = Buffer.from(config.metricsToken);
+      if (a.length !== b.length || !timingSafeEqual(a, b)) return res.status(401).end();
+    }
+    res.set("Content-Type", registry.contentType);
+    res.end(await registry.metrics());
+  });
 
   app.get("/readyz", async (_req, res) => {
     const checks = { config: "ok", azure: "unknown", store: getStore().backend };
@@ -66,12 +101,12 @@ export function createApp() {
   // ── Chat web UI (static page is public; the /chat API is bearer-protected) ──
   app.use("/ui", express.static(publicDir));
 
-  // ── REST + chat API (rate limited + bearer auth) ────────────────────────────
+  // ── REST + chat API (coarse IP limit, then auth + per-identity limits) ──────
   app.use(rateLimiter);
-  app.use("/logs", requireAuth, logsRouter);
-  app.use("/builds", requireAuth, buildsRouter);
-  app.use("/projects", requireAuth, projectsRouter);
-  app.use("/chat", requireAuth, chatRouter);
+  app.use("/logs", requireAuth, identityLimiter, logsRouter);
+  app.use("/builds", requireAuth, identityLimiter, buildsRouter);
+  app.use("/projects", requireAuth, identityLimiter, projectsRouter);
+  app.use("/chat", requireAuth, expensiveLimiter, chatRouter);
 
   app.get("/", (_req, res) =>
     res.json({

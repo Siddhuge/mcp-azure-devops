@@ -6,6 +6,7 @@ import { hashLines } from "../utils/cache.js";
 import { getStore } from "../store/index.js";
 import { filterRelevant, bucketize, dedupe, normalizeForHash } from "../utils/logParser.js";
 import { runRules } from "../utils/ruleEngine.js";
+import { classificationTotal } from "../metrics.js";
 
 const log = logger.child({ module: "analyzer" });
 
@@ -135,10 +136,12 @@ export async function analyzeBuild(buildId, project) {
     getAllLogLines(buildId, project),
     getTimelineIssues(buildId, project).catch(() => ({ errors: [], warnings: [] })),
   ]);
-  return classifyLines(allLines, {
+  const result = await classifyLines(allLines, {
     timelineErrors: timeline.errors,
     timelineWarnings: timeline.warnings,
   });
+  classificationTotal.inc({ source: result.source });
+  return result;
 }
 
 /** Exposed for tests / readiness. */

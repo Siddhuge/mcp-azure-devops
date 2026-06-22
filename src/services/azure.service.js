@@ -8,6 +8,8 @@ import {
   BuildNotFoundError,
   ValidationError,
 } from "../utils/errors.js";
+import { mapWithConcurrency } from "../utils/concurrency.js";
+import { azureRequestsTotal } from "../metrics.js";
 
 const API_VERSION = "7.0";
 const REQUEST_TIMEOUT_MS = 15_000;
@@ -75,6 +77,7 @@ async function getWithRetry(url, opts = {}) {
       // Network/timeout error — no response.
       lastErr = err;
       if (attempt === MAX_RETRIES) {
+        azureRequestsTotal.inc({ outcome: "error" });
         throw new AzureUpstreamError("Azure DevOps request failed (network error)", {
           cause: err,
         });
@@ -83,7 +86,10 @@ async function getWithRetry(url, opts = {}) {
       continue;
     }
 
-    if (res.status >= 200 && res.status < 300) return res;
+    if (res.status >= 200 && res.status < 300) {
+      azureRequestsTotal.inc({ outcome: "success" });
+      return res;
+    }
 
     if (isRetryable(res.status, false) && attempt < MAX_RETRIES) {
       const retryAfter = Number(res.headers?.["retry-after"]);
@@ -91,6 +97,7 @@ async function getWithRetry(url, opts = {}) {
       continue;
     }
 
+    azureRequestsTotal.inc({ outcome: "error" });
     throw mapStatusError(res, url);
   }
   // Unreachable, but keeps the type checker happy.
@@ -165,7 +172,12 @@ export async function getLogContent(buildId, logId, project) {
 export async function getAllLogLines(buildId, project) {
   const meta = await getBuildLogs(buildId, project);
   const logs = Array.isArray(meta?.value) ? meta.value : [];
-  const chunks = await Promise.all(logs.map((l) => getLogContent(buildId, l.id, project)));
+  // Bounded fan-out: a build can have hundreds of log files.
+  const chunks = await mapWithConcurrency(
+    logs,
+    (l) => getLogContent(buildId, l.id, project),
+    config.azure.maxConcurrency,
+  );
   return chunks.flat();
 }
 

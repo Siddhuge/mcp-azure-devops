@@ -8,12 +8,15 @@ const log = logger.child({ module: "server" });
 const app = createApp();
 const server = app.listen(config.port, () => {
   log.info(
-    { port: config.port, env: config.nodeEnv, llm: config.llm.enabled, authEnabled: config.apiTokens.length > 0 },
+    {
+      port: config.port,
+      env: config.nodeEnv,
+      llm: config.llm.enabled,
+      auth: { serviceTokens: config.auth.tokens.length, oidc: config.auth.oidc.enabled },
+      store: config.redisUrl ? "redis" : "memory",
+    },
     "HTTP server listening",
   );
-  if (config.apiTokens.length === 0) {
-    log.warn("API_TOKENS is empty — REST/MCP-HTTP endpoints are UNAUTHENTICATED (dev only)");
-  }
 });
 
 // ── Graceful shutdown ────────────────────────────────────────────────────────

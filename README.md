@@ -197,11 +197,27 @@ All build tools accept an optional `project` (defaults to `AZURE_PROJECT`).
 
 ## Security
 
-- **Bearer auth** on all REST and MCP-HTTP routes (`API_TOKENS`), constant-time compared. Health probes stay public.
-- **Secret redaction** — Azure PAT and Anthropic key are stripped from logs and error messages.
-- **Helmet**, **CORS** (locked down in production), **rate limiting**, per-request IDs.
-- **Bounded retries** with exponential backoff + jitter on Azure calls; only transient `429`/`5xx`/network errors retry, never `401`/`404`.
-- `.env` is gitignored. **Never commit a PAT.** Run as the non-root `node` user in Docker.
+- **Auth (dual mode)** — every REST/MCP-HTTP route requires a `Bearer` credential:
+  - **Named service tokens** (`API_TOKENS=name:secret,…`) — hashed at rest, constant-time compared, used for machine-to-machine; each request is attributed to its token name.
+  - **OIDC/JWT** (any IdP — Entra ID, Okta, Auth0) when `OIDC_ISSUER` is set: signature verified against the issuer's JWKS, with `iss`/`aud`/`exp` checks and optional `OIDC_REQUIRED_SCOPE` (403 if missing).
+- **Secret redaction** — Azure PAT/Anthropic key stripped from logs; **LLM egress** also strips GUIDs/IPs/tokens/emails (`LLM_REDACT_INPUT`).
+- **Helmet**, **CORS** (locked down in prod), **per-identity rate limiting** (stricter on the LLM paths), per-request IDs.
+- **Bounded retries** (backoff+jitter, idempotent-only) and **bounded Azure fan-out** (`AZURE_MAX_CONCURRENCY`).
+- **Secrets from files** — any sensitive var supports `<VAR>_FILE` (e.g. `AZURE_PAT_FILE=/run/secrets/azure_pat`) for K8s/Docker secrets, Vault, or cloud secret mounts. `.env` is gitignored.
+- Runs as non-root with a read-only rootfs in the container.
+
+## Enterprise / operations
+
+| Concern | How |
+|---------|-----|
+| **Identity & authz** | Service tokens + OIDC/JWT (above); per-identity audit + rate limits |
+| **Metrics** | `GET /metrics` (Prometheus): `http_request_duration_seconds`, `classification_total{source}`, `llm_cost_usd_total`, `llm_spend_usd`, `azure_requests_total`, Node defaults. Optional `METRICS_TOKEN`. |
+| **Audit log** | One structured JSON line per action (`event:"audit"`) with actor, action, target, source, cost, requestId — ship stdout to your SIEM |
+| **Shared state / scale** | `REDIS_URL` shares the cache + LLM budget across replicas (compose wires Redis). `/readyz` reports the backend. |
+| **Data governance** | LLM-egress redaction (`LLM_REDACT_INPUT`); the rule-engine + cache tiers never call out |
+| **Supply chain** | CI gates on `npm audit --omit=dev --audit-level=high` (production deps: **0 known vulns**) and a **Trivy** image scan (HIGH/CRITICAL). Remaining advisories are dev-only test tooling (vitest/vite/esbuild) and are not shipped in the image. |
+
+> Reaching a fully certified enterprise deployment still requires *your* infra: connect your IdP (`OIDC_*`), mount real secrets (`*_FILE`), scrape `/metrics` + ship the audit log to your monitoring/SIEM, set SLOs/alerts, and run a security review. The code supports all of this; it can't self-certify.
 
 ---
 

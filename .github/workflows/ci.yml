@@ -18,4 +18,18 @@ jobs:
       - run: npm ci
       - run: npm run lint
       - run: npm test
-      - run: docker build -t mcp-azure-devops:ci .
+      # Gate on production dependencies (what actually ships). Dev-only tooling
+      # CVEs are reported but non-blocking (not in the runtime image).
+      - name: Audit production dependencies
+        run: npm audit --omit=dev --audit-level=high
+      - name: Audit all dependencies (non-blocking, visibility)
+        run: npm audit || true
+      - name: Build image
+        run: docker build -t mcp-azure-devops:ci .
+      - name: Scan image for HIGH/CRITICAL CVEs (Trivy)
+        uses: aquasecurity/trivy-action@0.28.0
+        with:
+          image-ref: mcp-azure-devops:ci
+          severity: HIGH,CRITICAL
+          ignore-unfixed: true
+          exit-code: "1"

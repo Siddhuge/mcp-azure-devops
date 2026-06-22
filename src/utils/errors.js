@@ -32,6 +32,12 @@ export class UnauthorizedError extends AppError {
   }
 }
 
+export class ForbiddenError extends AppError {
+  constructor(message = "Insufficient scope/permissions", opts = {}) {
+    super(message, { status: 403, code: "FORBIDDEN", expose: true, ...opts });
+  }
+}
+
 /** Azure rejected our PAT (often returned as an HTML sign-in page). */
 export class AzureAuthError extends AppError {
   constructor(message = "Azure DevOps authentication failed — check AZURE_PAT scopes", opts = {}) {
