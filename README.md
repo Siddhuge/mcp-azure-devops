@@ -183,9 +183,15 @@ All build tools accept an optional `project` (defaults to `AZURE_PROJECT`).
 | `ANTHROPIC_API_KEY` | when LLM on | — | Anthropic API key |
 | `LLM_MODEL` | | `claude-haiku-4-5` | Model id |
 | `LLM_MAX_INPUT_LINES` | | `120` | Cap on log lines sent to the model |
-| `LLM_MONTHLY_BUDGET_USD` | | `25` | Soft monthly spend ceiling |
+| `LLM_MONTHLY_BUDGET_USD` | | `25` | Soft monthly spend ceiling (shared via Redis if set) |
+| `LLM_REDACT_INPUT` | | `true` | Redact secrets/PII (GUIDs, IPs, tokens, emails) from log content before LLM egress |
+| `REDIS_URL` | | _(empty)_ | Share cache + budget across replicas. Empty = in-process (single instance only) |
 | `CACHE_MAX_ENTRIES` / `CACHE_TTL_SECONDS` | | `500` / `3600` | Result cache sizing |
 | `LOG_LEVEL` | | `info` | Pino log level |
+
+### Data governance & scaling
+- **LLM egress redaction** — build logs contain subscription IDs, service-principal/object IDs, IPs, and tokens. With `LLM_REDACT_INPUT=true` (default) these are stripped before any content is sent to Anthropic. The deterministic rule-engine and cache tiers never call out.
+- **Shared state for multiple replicas** — the result cache and the monthly budget counter live in-process by default, so with >1 replica the cost cap would be per-process and reset on restart. Set `REDIS_URL` (docker-compose wires a `redis` service automatically) to make both **shared and durable**, so the budget cap is global. `/readyz` reports the active backend (`store: memory|redis`).
 
 ---
 

@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach } from "vitest";
 import request from "supertest";
 import nock from "nock";
 import { createApp } from "../../src/app.js";
-import { __cache } from "../../src/analyzer/index.js";
+import { __store } from "../../src/analyzer/index.js";
 
 const BASE = "https://dev.azure.com";
 const PREFIX = "/test-org/test-project/_apis/build";
@@ -12,9 +12,9 @@ beforeAll(() => {
   nock.disableNetConnect();
   nock.enableNetConnect("127.0.0.1"); // allow supertest's loopback server
 });
-afterEach(() => {
+afterEach(async () => {
   nock.cleanAll();
-  __cache.clear();
+  await __store.cacheClear();
 });
 
 describe("REST API", () => {

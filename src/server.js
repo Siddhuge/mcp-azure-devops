@@ -1,6 +1,7 @@
 import { createApp } from "./app.js";
 import { config } from "./config/env.js";
 import { logger } from "./config/logger.js";
+import { getStore } from "./store/index.js";
 
 const log = logger.child({ module: "server" });
 
@@ -27,8 +28,9 @@ function shutdown(signal) {
     process.exit(1);
   }, 10_000).unref();
 
-  server.close((err) => {
+  server.close(async (err) => {
     clearTimeout(force);
+    await getStore().close().catch(() => {});
     if (err) {
       log.error({ err: { message: err.message } }, "error during shutdown");
       process.exit(1);

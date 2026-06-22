@@ -3,6 +3,7 @@ import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { scrubSecrets } from "../config/redact.js";
 import { redactLines } from "../utils/scrub.js";
+import { getStore } from "../store/index.js";
 import { LlmError } from "../utils/errors.js";
 
 const log = logger.child({ module: "llm.service" });
@@ -41,20 +42,11 @@ const SYSTEM_PROMPT = [
   "Respond only via the required structured fields.",
 ].join(" ");
 
-/** Current-month spend accumulator (process-local). */
-const spend = { month: currentMonth(), usd: 0 };
+const store = getStore();
 
 function currentMonth() {
   const now = new Date();
   return `${now.getUTCFullYear()}-${now.getUTCMonth()}`;
-}
-
-function rolloverIfNeeded() {
-  const m = currentMonth();
-  if (m !== spend.month) {
-    spend.month = m;
-    spend.usd = 0;
-  }
 }
 
 /**
@@ -73,15 +65,19 @@ export function estimateCost(usage = {}) {
   );
 }
 
-/** @returns {{ month: string, usd: number, budgetUsd: number, exceeded: boolean }} */
-export function budgetStatus() {
-  rolloverIfNeeded();
+/**
+ * Current month's spend vs. the configured cap, read from the shared store.
+ * @returns {Promise<{ month: string, usd: number, budgetUsd: number, exceeded: boolean }>}
+ */
+export async function budgetStatus() {
+  const month = currentMonth();
+  const usd = await store.budgetGet(month);
   const budgetUsd = config.llm.monthlyBudgetUsd;
   return {
-    month: spend.month,
-    usd: Number(spend.usd.toFixed(6)),
+    month,
+    usd: Number(usd.toFixed(6)),
     budgetUsd,
-    exceeded: budgetUsd > 0 && spend.usd >= budgetUsd,
+    exceeded: budgetUsd > 0 && usd >= budgetUsd,
   };
 }
 
@@ -100,24 +96,23 @@ export function __setClient(mock) {
 /**
  * Record LLM spend against the shared monthly budget.
  * @param {number} usd
+ * @returns {Promise<void>}
  */
-export function recordSpend(usd) {
-  rolloverIfNeeded();
-  spend.usd += usd;
+export async function recordSpend(usd) {
+  await store.budgetIncr(currentMonth(), usd);
 }
 
 /** Reset the budget accumulator (tests). */
-export function __resetBudget() {
-  spend.month = currentMonth();
-  spend.usd = 0;
+export async function __resetBudget() {
+  await store.budgetReset(currentMonth());
 }
 
 /**
  * Whether the LLM tier can run right now (configured, enabled, under budget).
- * @returns {boolean}
+ * @returns {Promise<boolean>}
  */
-export function llmAvailable() {
-  return config.llm.enabled && !budgetStatus().exceeded;
+export async function llmAvailable() {
+  return config.llm.enabled && !(await budgetStatus()).exceeded;
 }
 
 /**
@@ -140,7 +135,6 @@ function buildPrompt(lines) {
  * @returns {Promise<{ failureType: string, rootCause: string, fix: string, severity: string, confidence: number, source: "LLM", costUsd: number }>}
  */
 export async function analyzeWithLlm(filteredLines) {
-  rolloverIfNeeded();
   try {
     const response = await getAnthropicClient().messages.create({
       model: config.llm.model,
@@ -153,7 +147,7 @@ export async function analyzeWithLlm(filteredLines) {
     });
 
     const costUsd = estimateCost(response.usage);
-    recordSpend(costUsd);
+    await recordSpend(costUsd);
 
     const text = (response.content || [])
       .filter((b) => b.type === "text")

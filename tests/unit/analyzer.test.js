@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from "vitest";
-import { classifyLines, __cache } from "../../src/analyzer/index.js";
+import { classifyLines, __store } from "../../src/analyzer/index.js";
 import { __setClient, __resetBudget } from "../../src/services/llm.service.js";
 
 const throwingClient = {
@@ -22,9 +22,9 @@ function mockLlm(payload) {
 }
 
 describe("analyzer.classifyLines", () => {
-  beforeEach(() => {
-    __cache.clear();
-    __resetBudget();
+  beforeEach(async () => {
+    await __store.cacheClear();
+    await __resetBudget();
   });
 
   it("classifies via the rule engine without calling the LLM (free tier)", async () => {

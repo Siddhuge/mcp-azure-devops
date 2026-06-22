@@ -2,7 +2,8 @@ import { config } from "../config/env.js";
 import { logger } from "../config/logger.js";
 import { getAllLogLines, getTimelineIssues } from "../services/azure.service.js";
 import { analyzeWithLlm, llmAvailable, budgetStatus } from "../services/llm.service.js";
-import { TtlLruCache, hashLines } from "../utils/cache.js";
+import { hashLines } from "../utils/cache.js";
+import { getStore } from "../store/index.js";
 import { filterRelevant, bucketize, dedupe, normalizeForHash } from "../utils/logParser.js";
 import { runRules } from "../utils/ruleEngine.js";
 
@@ -11,10 +12,7 @@ const log = logger.child({ module: "analyzer" });
 // Escalate to the LLM only when the rule engine is below this confidence.
 const RULE_CONFIDENCE_FLOOR = 0.6;
 
-const resultCache = new TtlLruCache({
-  maxEntries: config.cache.maxEntries,
-  ttlSeconds: config.cache.ttlSeconds,
-});
+const store = getStore();
 
 /**
  * @typedef {Object} Classification
@@ -84,14 +82,14 @@ export async function classifyLines(allLines, { timelineErrors = [], timelineWar
   // Tier 2 — result cache (free on repeat). Keyed by normalized signal lines.
   const deduped = dedupe([...timelineErrors, ...filtered]);
   const cacheKey = hashLines(deduped.map(normalizeForHash));
-  const cached = resultCache.get(cacheKey);
+  const cached = await store.cacheGet(cacheKey);
   if (cached) {
     log.debug("cache hit");
     return { ...cached, source: "CACHE", meta };
   }
 
   // Tier 3 — Claude Haiku (only when enabled and under budget).
-  if (deduped.length > 0 && llmAvailable()) {
+  if (deduped.length > 0 && (await llmAvailable())) {
     try {
       const llm = await analyzeWithLlm(deduped);
       const result = {
@@ -102,7 +100,7 @@ export async function classifyLines(allLines, { timelineErrors = [], timelineWar
         confidence: llm.confidence,
         source: "LLM",
       };
-      resultCache.set(cacheKey, result);
+      await store.cacheSet(cacheKey, result, config.cache.ttlSeconds);
       return { ...result, meta: { ...meta, costUsd: llm.costUsd } };
     } catch (err) {
       // LLM failure must never break analysis — degrade to deterministic output.
@@ -115,7 +113,7 @@ export async function classifyLines(allLines, { timelineErrors = [], timelineWar
     // We had a low-confidence rule match; return it rather than UNKNOWN.
     return { ...ruleResult(match), meta };
   }
-  const capped = config.llm.enabled && budgetStatus().exceeded;
+  const capped = config.llm.enabled && (await budgetStatus()).exceeded;
   const fb = fallbackResult(allErrors, capped ? "BUDGET_CAPPED" : "FALLBACK");
   // Distinguish "no signal in a real log" from "no data at all" (logs purged by
   // retention, or the build failed before producing any output/timeline).
@@ -144,4 +142,4 @@ export async function analyzeBuild(buildId, project) {
 }
 
 /** Exposed for tests / readiness. */
-export const __cache = resultCache;
+export const __store = store;

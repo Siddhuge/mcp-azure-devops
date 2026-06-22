@@ -169,7 +169,7 @@ function ok(data) {
  * @returns {Promise<{ reply: string, toolCalls: Array<{name:string,input:object}>, costUsd: number }>}
  */
 export async function runChat(history) {
-  if (budgetStatus().exceeded) {
+  if ((await budgetStatus()).exceeded) {
     return {
       reply: "The monthly LLM budget has been reached, so chat is paused. Increase LLM_MONTHLY_BUDGET_USD to resume.",
       toolCalls: [],

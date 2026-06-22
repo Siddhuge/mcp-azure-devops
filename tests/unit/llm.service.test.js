@@ -40,12 +40,12 @@ describe("llm.service", () => {
       }),
     );
 
-    const before = budgetStatus().usd;
+    const before = (await budgetStatus()).usd;
     const result = await analyzeWithLlm(["##[error]timed out"]);
     expect(result.source).toBe("LLM");
     expect(result.failureType).toBe("INFRA_TIMEOUT");
     expect(result.confidence).toBe(0.8);
-    expect(budgetStatus().usd).toBeGreaterThan(before);
+    expect((await budgetStatus()).usd).toBeGreaterThan(before);
   });
 
   it("clamps out-of-range confidence and bad severity", async () => {
@@ -68,7 +68,7 @@ describe("llm.service", () => {
     await expect(analyzeWithLlm(["err"])).rejects.toBeInstanceOf(LlmError);
   });
 
-  it("reports availability based on budget", () => {
-    expect(llmAvailable()).toBe(true);
+  it("reports availability based on budget", async () => {
+    expect(await llmAvailable()).toBe(true);
   });
 });

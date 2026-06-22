@@ -19,6 +19,7 @@ import { dirname, join } from "node:path";
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 import { ping } from "./services/azure.service.js";
 import { budgetStatus } from "./services/llm.service.js";
+import { getStore } from "./store/index.js";
 
 /**
  * Build the Express application. Kept free of side effects (no listen) so it can
@@ -47,11 +48,11 @@ export function createApp() {
   app.get("/healthz", (_req, res) => res.json({ status: "ok", uptime: process.uptime() }));
 
   app.get("/readyz", async (_req, res) => {
-    const checks = { config: "ok", azure: "unknown" };
+    const checks = { config: "ok", azure: "unknown", store: getStore().backend };
     try {
       await ping();
       checks.azure = "ok";
-      res.json({ status: "ready", checks, llm: budgetStatus() });
+      res.json({ status: "ready", checks, llm: await budgetStatus() });
     } catch (err) {
       checks.azure = "error";
       logger.warn({ err: { message: err.message } }, "readiness check failed");

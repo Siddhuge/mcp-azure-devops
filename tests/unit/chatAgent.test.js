@@ -48,7 +48,7 @@ describe("chatAgent.runChat", () => {
     expect(out.reply).toContain("Alpha");
     expect(out.toolCalls).toEqual([{ name: "list_projects", input: {} }]);
     expect(out.costUsd).toBeGreaterThan(0);
-    expect(budgetStatus().usd).toBeGreaterThan(0);
+    expect((await budgetStatus()).usd).toBeGreaterThan(0);
   });
 
   it("routes a build question to analyze_pipeline_failure", async () => {
@@ -80,10 +80,10 @@ describe("chatAgent.runChat", () => {
     // No client/azure mocks needed — should short-circuit before any call.
     const big = 1e9;
     const { recordSpend } = await import("../../src/services/llm.service.js");
-    recordSpend(big);
+    await recordSpend(big);
     const out = await runChat([{ role: "user", content: "list projects" }]);
     expect(out.reply).toMatch(/budget/i);
     expect(out.toolCalls).toHaveLength(0);
-    __resetBudget();
+    await __resetBudget();
   });
 });

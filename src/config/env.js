@@ -48,6 +48,9 @@ const schema = Joi.object({
   // Cache
   CACHE_MAX_ENTRIES: Joi.number().integer().min(1).default(500),
   CACHE_TTL_SECONDS: Joi.number().integer().min(0).default(3600),
+  // Optional Redis for SHARED cache + budget across replicas. When unset, an
+  // in-process store is used (correct for a single instance only).
+  REDIS_URL: Joi.string().allow("").default(""),
 })
   // The LLM tier needs a key to actually run; enabling it without one is a
   // config mistake we want to surface at boot rather than at request time.
@@ -99,6 +102,7 @@ export const config = Object.freeze({
     maxEntries: value.CACHE_MAX_ENTRIES,
     ttlSeconds: value.CACHE_TTL_SECONDS,
   }),
+  redisUrl: value.REDIS_URL,
 });
 
 export default config;
