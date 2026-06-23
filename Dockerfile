@@ -12,14 +12,21 @@ FROM node:20-alpine AS runtime
 ENV NODE_ENV=production \
     PORT=4000
 
-# tini = PID 1 that reaps zombies and forwards signals (clean SIGTERM shutdown).
-RUN apk add --no-cache tini
+# Base-image hardening: patch OS packages, add tini (PID 1 that reaps zombies
+# and forwards signals), and remove the bundled npm CLI — it's not used at
+# runtime (we exec `node`) and its old transitive deps trip image scanners.
+RUN apk upgrade --no-cache \
+  && apk add --no-cache tini \
+  && rm -rf /usr/local/lib/node_modules/npm /usr/local/bin/npm /usr/local/bin/npx
 
 WORKDIR /app
 
 # Run as the unprivileged built-in 'node' user.
 COPY --chown=node:node --from=deps /app/node_modules ./node_modules
-COPY --chown=node:node package.json package-lock.json ./
+# Only package.json (for ESM "type"/metadata). The lockfile is a build-stage
+# input for `npm ci`; shipping it makes scanners flag dev-only deps that aren't
+# installed in this prod image (node_modules is --omit=dev).
+COPY --chown=node:node package.json ./
 COPY --chown=node:node src ./src
 COPY --chown=node:node public ./public
 
