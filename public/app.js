@@ -34,7 +34,12 @@ settingsBtn.addEventListener("click", async () => {
       a.logout();
       refreshAuthButton();
     } else {
-      a.login(); // redirects to the IdP
+      try {
+        await a.login(); // redirects to the IdP
+      } catch (e) {
+        console.error("OIDC login failed:", e);
+        addMessage("assistant", "⚠ Sign-in could not start: " + (e && e.message ? e.message : e));
+      }
     }
   } else {
     const next = window.prompt("API token:", localStorage.getItem("mcp_azdo_token") || "");
@@ -361,5 +366,6 @@ input.addEventListener("input", () => {
 restoreHistory();
 window.Auth.ready.then(() => {
   refreshAuthButton();
+  if (window.Auth.error) addMessage("assistant", "⚠ Sign-in did not complete: " + window.Auth.error);
   input.focus();
 });

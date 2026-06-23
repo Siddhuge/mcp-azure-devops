@@ -53,7 +53,9 @@
       }),
     );
   }
-  const cleanUrl = () => history.replaceState({}, document.title, location.origin + location.pathname);
+  // NB: window.history explicitly — app.js's top-level `let history` (the chat
+  // array) shadows the global `history` binding for classic scripts on the page.
+  const cleanUrl = () => window.history.replaceState({}, document.title, location.origin + location.pathname);
 
   async function discover() {
     if (meta) return meta;
@@ -65,6 +67,9 @@
   }
 
   async function login() {
+    if (!window.isSecureContext || !(crypto && crypto.subtle)) {
+      throw new Error("PKCE needs a secure context — open the app on http://localhost or behind HTTPS (not http://<ip> or a LAN host).");
+    }
     const m = await discover();
     const verifier = rand(48);
     const state = rand(16);
@@ -107,7 +112,17 @@
         code_verifier: pk.verifier,
       }),
     });
-    if (!r.ok) throw new Error("token exchange failed (" + r.status + ")");
+    if (!r.ok) {
+      const body = await r.text().catch(() => "");
+      let detail = body.slice(0, 400);
+      try {
+        const j = JSON.parse(body);
+        detail = (j.error || "") + ": " + (j.error_description || "").split("\n")[0];
+      } catch {
+        /* keep raw */
+      }
+      throw new Error("token exchange failed (" + r.status + ") " + detail);
+    }
     storeToken(await r.json());
   }
 
@@ -136,6 +151,7 @@
   const Auth = {
     mode: "token",
     account: null,
+    error: null,
     isOidc() {
       return this.mode === "oidc";
     },
@@ -150,6 +166,7 @@
             await handleRedirect();
           } catch (e) {
             console.warn("OIDC redirect:", e.message);
+            this.error = e.message;
           }
           this.account = (loadOidc() || {}).email || null;
         }
