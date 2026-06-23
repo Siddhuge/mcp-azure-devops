@@ -28,9 +28,10 @@ describe("loadFileSecrets", () => {
     expect(process.env.TEST_SECRET).toBe("from-env");
   });
 
-  it("throws a clear error when the file is missing", () => {
+  it("skips a missing file (optional mounted secret key)", () => {
     process.env.TEST_SECRET_FILE = join(dir, "nope.txt");
-    expect(() => loadFileSecrets(["TEST_SECRET"])).toThrow(/Failed to read TEST_SECRET_FILE/);
+    expect(() => loadFileSecrets(["TEST_SECRET"])).not.toThrow();
+    expect(process.env.TEST_SECRET).toBeUndefined();
   });
 
   it("is a no-op when neither var is set", () => {

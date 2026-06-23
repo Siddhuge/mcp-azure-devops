@@ -1,14 +1,19 @@
 # syntax=docker/dockerfile:1
 
+# Base image pinned by digest for reproducible builds. To bump deliberately:
+#   docker pull node:20-alpine && docker inspect --format '{{index .RepoDigests 0}}' node:20-alpine
+# then update both digests below (and re-run the Trivy scan).
+ARG NODE_IMAGE=node:20-alpine@sha256:fb4cd12c85ee03686f6af5362a0b0d56d50c58a04632e6c0fb8363f609372293
+
 # ── Build stage: install production deps from the lockfile ───────────────────
-FROM node:20-alpine AS deps
+FROM ${NODE_IMAGE} AS deps
 WORKDIR /app
 COPY package.json package-lock.json ./
 # Reproducible, no lifecycle scripts (supply-chain safety).
 RUN npm ci --omit=dev --ignore-scripts
 
 # ── Runtime stage ────────────────────────────────────────────────────────────
-FROM node:20-alpine AS runtime
+FROM ${NODE_IMAGE} AS runtime
 ENV NODE_ENV=production \
     PORT=4000
 

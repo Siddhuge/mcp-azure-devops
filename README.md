@@ -300,6 +300,23 @@ stdio:
 > Behind a reverse proxy / ingress, set `TRUST_PROXY` to the number of proxy hops
 > so client IPs and rate-limiting are correct.
 
+The base image is pinned by digest for reproducible builds, and a CycloneDX SBOM is produced in CI (and via `npm run sbom`).
+
+---
+
+## Deploy to Kubernetes (Helm)
+
+A hardened, vendor-neutral Helm chart is in [`deploy/helm/mcp-azure-devops`](deploy/helm/mcp-azure-devops) — liveness/readiness probes, non-root/read-only/seccomp pod security, resource limits, optional HPA, PodDisruptionBudget, NetworkPolicy, Prometheus `ServiceMonitor`, secrets-as-files (`*_FILE`), and an optional bundled Redis (use managed Redis in prod).
+
+```bash
+helm upgrade --install mcp deploy/helm/mcp-azure-devops -n mcp --create-namespace \
+  --set config.AZURE_ORG=<org> --set config.AZURE_PROJECT=<project> \
+  --set secrets.data.AZURE_PAT=<pat> --set secrets.data.API_TOKENS=ci:<token> \
+  --set redis.enabled=true
+```
+
+Full options, production secrets guidance, and validation: [`deploy/README.md`](deploy/README.md). Supply-chain posture: [`SECURITY.md`](SECURITY.md).
+
 ---
 
 ## Architecture

@@ -51,3 +51,6 @@ ecosystem-out.log
 
 # Claude Code local settings
 .claude/
+
+# Generated SBOM
+sbom.cdx.json
