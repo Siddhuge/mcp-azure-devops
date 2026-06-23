@@ -37,6 +37,10 @@ const schema = Joi.object({
   OIDC_JWKS_URL: Joi.string().allow("").default(""), // optional; derived from issuer if blank
   OIDC_AUDIENCE: Joi.string().allow("").default(""),
   OIDC_REQUIRED_SCOPE: Joi.string().allow("").default(""),
+  // Public SPA settings for the browser PKCE login (non-secret). When OIDC_CLIENT_ID
+  // is set, the web UI shows "Sign in" and does Authorization Code + PKCE.
+  OIDC_CLIENT_ID: Joi.string().allow("").default(""),
+  OIDC_SCOPES: Joi.string().allow("").default("openid profile"),
 
   // Optional bearer token to protect /metrics (blank = unauthenticated, like /healthz).
   METRICS_TOKEN: Joi.string().allow("").default(""),
@@ -113,6 +117,8 @@ export const config = Object.freeze({
       jwksUrl: value.OIDC_JWKS_URL,
       audience: value.OIDC_AUDIENCE,
       requiredScope: value.OIDC_REQUIRED_SCOPE,
+      clientId: value.OIDC_CLIENT_ID, // public SPA client id (browser PKCE)
+      scopes: value.OIDC_SCOPES,
     }),
   }),
   metricsToken: value.METRICS_TOKEN,

@@ -37,6 +37,8 @@ config:
   OIDC_AUDIENCE: ""
   OIDC_JWKS_URL: ""
   OIDC_REQUIRED_SCOPE: ""
+  OIDC_CLIENT_ID: "" # public SPA client id → enables browser PKCE login in /ui
+  OIDC_SCOPES: "openid profile"
 
 # Secrets. For production, leave these empty and provide the Secret out-of-band
 # (existingSecret) via an external-secrets operator / CSI driver / sealed-secrets.

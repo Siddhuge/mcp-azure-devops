@@ -11,6 +11,8 @@ process.env.API_TOKENS = "test-token";
 process.env.OIDC_ISSUER = "https://issuer.test/";
 process.env.OIDC_AUDIENCE = "mcp-azure-devops";
 process.env.OIDC_REQUIRED_SCOPE = "pipelines.read";
+process.env.OIDC_CLIENT_ID = "spa-client-id";
+process.env.OIDC_SCOPES = "openid profile";
 
 process.env.LLM_ENABLED = "true";
 process.env.ANTHROPIC_API_KEY = "test-anthropic-key";

@@ -29,6 +29,15 @@ import {
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 
+/** Origin of a URL, or null if unparseable. */
+function safeOrigin(url) {
+  try {
+    return new URL(url).origin;
+  } catch {
+    return null;
+  }
+}
+
 // Spend + budget gauges (scrape-time) so dashboards/alerts can compare them.
 registerAsyncGauge("llm_spend_usd", "Current-month LLM spend in USD", async () => (await budgetStatus()).usd);
 registerAsyncGauge("llm_budget_usd", "Configured monthly LLM budget in USD (0 = uncapped)", async () => config.llm.monthlyBudgetUsd);
@@ -44,7 +53,19 @@ export function createApp() {
   // Trust N reverse-proxy hops so req.ip / rate-limiting use the real client IP.
   if (config.trustProxy > 0) app.set("trust proxy", config.trustProxy);
 
-  app.use(helmet());
+  // The browser PKCE flow fetches the IdP's discovery + token endpoints, so the
+  // issuer origin must be allowed in connect-src (default is 'self' only).
+  const oidcOrigin = config.auth.oidc.issuer ? safeOrigin(config.auth.oidc.issuer) : null;
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        useDefaults: true,
+        directives: {
+          "connect-src": ["'self'", ...(oidcOrigin ? [oidcOrigin] : [])],
+        },
+      },
+    }),
+  );
   app.use(cors({ origin: config.isProduction ? false : true }));
   app.use(express.json({ limit: "1mb" }));
   app.use(requestId);
@@ -69,6 +90,20 @@ export function createApp() {
 
   // ── Public health/readiness probes (no auth, no rate limit) ────────────────
   app.get("/healthz", (_req, res) => res.json({ status: "ok", uptime: process.uptime() }));
+
+  // Public, non-secret client config the web UI needs to pick an auth mode.
+  app.get("/config", (_req, res) => {
+    const o = config.auth.oidc;
+    const oidcLogin = o.enabled && Boolean(o.clientId);
+    res.json({
+      auth: {
+        mode: oidcLogin ? "oidc" : "token",
+        oidc: oidcLogin
+          ? { issuer: o.issuer, clientId: o.clientId, scopes: o.scopes, audience: o.audience }
+          : null,
+      },
+    });
+  });
 
   // Prometheus scrape endpoint. Unauthenticated by default (restrict at the
   // network layer); set METRICS_TOKEN to require a bearer.

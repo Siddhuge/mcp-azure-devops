@@ -103,3 +103,22 @@ describe("/metrics", () => {
     expect(res.text).toMatch(/process_cpu|nodejs_/);
   });
 });
+
+describe("/config (public SPA config)", () => {
+  it("advertises OIDC mode with the public SPA settings", async () => {
+    const res = await request(app).get("/config"); // no auth
+    expect(res.status).toBe(200);
+    expect(res.body.auth.mode).toBe("oidc");
+    expect(res.body.auth.oidc).toMatchObject({
+      issuer: "https://issuer.test/",
+      clientId: "spa-client-id",
+      audience: "mcp-azure-devops",
+    });
+    expect(res.body.auth.oidc.scopes).toContain("openid");
+  });
+
+  it("allows the IdP origin in the CSP connect-src (for PKCE token exchange)", async () => {
+    const res = await request(app).get("/healthz");
+    expect(res.headers["content-security-policy"]).toMatch(/connect-src[^;]*https:\/\/issuer\.test/);
+  });
+});

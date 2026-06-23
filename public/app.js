@@ -7,7 +7,6 @@ const sendBtn = document.getElementById("send");
 const settingsBtn = document.getElementById("settings");
 const newChatBtn = document.getElementById("newchat");
 
-const TOKEN_KEY = "mcp_azdo_token";
 const HISTORY_KEY = "mcp_azdo_history";
 const MAX_SEND = 30; // sliding window of messages sent each turn (server caps at 40)
 const REQUEST_TIMEOUT_MS = 120_000;
@@ -19,19 +18,40 @@ let abortedByUser = false;
 
 const introHTML = chat.innerHTML; // preserved so "New chat" can restore the welcome
 
-// ── Token handling ───────────────────────────────────────────────────────────
-function getToken() {
-  let token = localStorage.getItem(TOKEN_KEY);
-  if (!token) {
-    token = window.prompt("Enter your API token (the API_TOKENS value the server was started with):");
-    if (token) localStorage.setItem(TOKEN_KEY, token.trim());
+// ── Auth (delegated to window.Auth: token paste or OIDC PKCE) ──────────────────
+function refreshAuthButton() {
+  const a = window.Auth;
+  if (a.isOidc()) {
+    settingsBtn.textContent = a.account ? `Sign out (${a.account})` : "Sign in";
+  } else {
+    settingsBtn.textContent = "⚙︎ Token";
   }
-  return token ? token.trim() : "";
 }
-settingsBtn.addEventListener("click", () => {
-  const next = window.prompt("API token:", localStorage.getItem(TOKEN_KEY) || "");
-  if (next !== null) localStorage.setItem(TOKEN_KEY, next.trim());
+settingsBtn.addEventListener("click", async () => {
+  const a = window.Auth;
+  if (a.isOidc()) {
+    if (a.account) {
+      a.logout();
+      refreshAuthButton();
+    } else {
+      a.login(); // redirects to the IdP
+    }
+  } else {
+    const next = window.prompt("API token:", localStorage.getItem("mcp_azdo_token") || "");
+    if (next !== null) localStorage.setItem("mcp_azdo_token", next.trim());
+  }
 });
+
+/** Resolve a bearer; in OIDC mode with no session, kick off login (redirects away). */
+async function getBearer() {
+  const t = await window.Auth.token();
+  if (!t && window.Auth.isOidc()) {
+    window.Auth.login();
+    return null; // navigating to IdP
+  }
+  return t || "";
+}
+
 newChatBtn.addEventListener("click", () => {
   if (inFlight) return;
   history = [];
@@ -218,6 +238,9 @@ function parseFrame(frame) {
 
 // ── Send (streaming) ─────────────────────────────────────────────────────────
 async function send(text) {
+  const bearer = await getBearer();
+  if (bearer === null) return; // OIDC mode, not signed in — redirecting to the IdP
+
   history.push({ role: "user", content: text });
   addMessage("user", text);
   saveHistory();
@@ -254,7 +277,7 @@ async function send(text) {
   try {
     const res = await fetch("/chat/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Accept: "text/event-stream", Authorization: "Bearer " + getToken() },
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream", Authorization: "Bearer " + bearer },
       body: JSON.stringify({ messages: history.slice(-MAX_SEND) }),
       signal: controller.signal,
     });
@@ -263,7 +286,10 @@ async function send(text) {
       gotError = true;
       const d = await res.json().catch(() => ({}));
       acc = "⚠ " + ((d.error && d.error.message) || `Request failed (${res.status})`);
-      if (res.status === 401) localStorage.removeItem(TOKEN_KEY);
+      if (res.status === 401) {
+        window.Auth.logout();
+        refreshAuthButton();
+      }
     } else {
       const reader = res.body.getReader();
       const dec = new TextDecoder();
@@ -333,5 +359,7 @@ input.addEventListener("input", () => {
 });
 
 restoreHistory();
-getToken();
-input.focus();
+window.Auth.ready.then(() => {
+  refreshAuthButton();
+  input.focus();
+});

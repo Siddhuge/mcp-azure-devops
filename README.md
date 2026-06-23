@@ -132,8 +132,15 @@ MCP client needed. Start the HTTP server (or container) and open:
 http://localhost:4000/ui
 ```
 
-On first use it asks for your API token (one of `API_TOKENS`) and remembers it in the
-browser. Then just type natural language:
+It replies live (SSE streaming), keeps your conversation across refreshes, and has copy buttons.
+
+**Sign-in** depends on config:
+- **Token mode** (default): it asks for an API token (one of `API_TOKENS`) and remembers it.
+- **OIDC mode**: set `OIDC_CLIENT_ID` (+ `OIDC_ISSUER`/`OIDC_AUDIENCE`/`OIDC_JWKS_URL`/`OIDC_SCOPES`) and the UI shows **Sign in** — a browser **Authorization Code + PKCE** flow (vendor-neutral, discovery-based) that gets a JWT from your IdP and uses it as the bearer.
+  - Register an **SPA** app in your IdP with redirect URI `<app-origin>/ui/` (e.g. `http://localhost:4000/ui/`).
+  - For **Entra ID**: add a *Single-page application* platform with that redirect URI, **Expose an API → Add a scope** (e.g. `access_as_user`), set `OIDC_SCOPES="openid profile offline_access api://<api-client-id>/access_as_user"`, and `OIDC_CLIENT_ID=<spa-app-client-id>`. The token's `aud` must equal `OIDC_AUDIENCE`.
+
+Then just type natural language:
 
 - *"list my projects"*
 - *"show recent failed builds in AzureBlueGreen"*
