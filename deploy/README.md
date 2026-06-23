@@ -35,6 +35,17 @@ curl -s http://localhost:4000/readyz | jq
 - **Monitoring**: `--set metrics.serviceMonitor.enabled=true` (needs the Prometheus Operator CRDs); scrapes `/metrics`.
 - **Network**: `--set networkPolicy.enabled=true` (default-deny with egress to 443 + DNS + Redis; tighten egress to specific CIDRs/egress-gateway in your environment).
 
+## Observability
+
+`GET /metrics` (Prometheus) exposes request rate/latency, `classification_total{source}`,
+`llm_cost_usd_total`, `llm_spend_usd` + `llm_budget_usd`, `azure_requests_total{outcome}`,
+and Node defaults. Artifacts in [`observability/`](observability):
+- **[grafana-dashboard.json](observability/grafana-dashboard.json)** — import (uid `mcp-azure-devops`); request/error/latency, classification tiers, LLM spend-vs-budget, Azure, memory.
+- **[alerts.yaml](observability/alerts.yaml)** — Prometheus recording + alert rules (error rate, p95 latency, Azure errors, LLM budget, target down, event-loop lag). Load via `rule_files:`, or enable the chart's `PrometheusRule` (`--set metrics.prometheusRule.enabled=true --set metrics.prometheusRule.labels.release=<your-prom>`).
+- **[RUNBOOK.md](observability/RUNBOOK.md)** — per-alert meaning + remediation + day-2 ops.
+
+Scrape with `--set metrics.serviceMonitor.enabled=true` (Prometheus Operator). Restrict `/metrics` via `METRICS_TOKEN` or NetworkPolicy.
+
 ## Validate without a cluster
 ```bash
 helm lint deploy/helm/mcp-azure-devops

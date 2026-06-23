@@ -29,8 +29,9 @@ import {
 
 const publicDir = join(dirname(fileURLToPath(import.meta.url)), "..", "public");
 
-// Spend gauge collected at scrape time from the shared store.
+// Spend + budget gauges (scrape-time) so dashboards/alerts can compare them.
 registerAsyncGauge("llm_spend_usd", "Current-month LLM spend in USD", async () => (await budgetStatus()).usd);
+registerAsyncGauge("llm_budget_usd", "Configured monthly LLM budget in USD (0 = uncapped)", async () => config.llm.monthlyBudgetUsd);
 
 /**
  * Build the Express application. Kept free of side effects (no listen) so it can

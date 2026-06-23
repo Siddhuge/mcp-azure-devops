@@ -89,6 +89,9 @@ metrics:
     enabled: false # requires the Prometheus Operator CRDs
     interval: 30s
     # If METRICS_TOKEN is set in secrets, the ServiceMonitor sends it as a bearer.
+  prometheusRule:
+    enabled: false # requires the Prometheus Operator CRDs; ships alert+recording rules
+    labels: {} # e.g. { release: kube-prometheus-stack } so your Prometheus selects it
 
 podAnnotations: {}
 nodeSelector: {}

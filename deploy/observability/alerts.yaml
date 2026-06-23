@@ -1,0 +1,92 @@
+# Prometheus alerting + recording rules for mcp-azure-devops.
+# Load directly into Prometheus (rule_files:), or use the Helm PrometheusRule
+# template (metrics.prometheusRule.enabled=true) for the Prometheus Operator.
+# Validate: promtool check rules deploy/observability/alerts.yaml
+#
+# Assumes the app is scraped with a job label "mcp-azure-devops" (the Helm
+# ServiceMonitor produces a job matching the Service name; adjust if different).
+groups:
+  - name: mcp-azure-devops.recording
+    rules:
+      # 5xx error ratio over 5m (NaN-safe: 0 when no traffic).
+      - record: job:mcp_http_error_ratio:5m
+        expr: |
+          sum(rate(http_requests_total{job="mcp-azure-devops",status=~"5.."}[5m]))
+          /
+          clamp_min(sum(rate(http_requests_total{job="mcp-azure-devops"}[5m])), 1)
+      # p95 request latency over 5m.
+      - record: job:mcp_http_latency_p95:5m
+        expr: |
+          histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job="mcp-azure-devops"}[5m])))
+      # Azure upstream error ratio over 5m.
+      - record: job:mcp_azure_error_ratio:5m
+        expr: |
+          sum(rate(azure_requests_total{job="mcp-azure-devops",outcome="error"}[5m]))
+          /
+          clamp_min(sum(rate(azure_requests_total{job="mcp-azure-devops"}[5m])), 1)
+
+  - name: mcp-azure-devops.alerts
+    rules:
+      - alert: McpTargetDown
+        expr: up{job="mcp-azure-devops"} == 0
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "mcp-azure-devops target down"
+          description: "No healthy scrape target for 5m. Check pods/Service. Runbook: McpTargetDown."
+
+      - alert: McpHighErrorRate
+        expr: job:mcp_http_error_ratio:5m > 0.05
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Elevated 5xx error rate (>5%)"
+          description: "5xx ratio is {{ $value | humanizePercentage }} over 5m. Runbook: McpHighErrorRate."
+
+      - alert: McpHighErrorRateCritical
+        expr: job:mcp_http_error_ratio:5m > 0.10
+        for: 5m
+        labels: { severity: critical }
+        annotations:
+          summary: "High 5xx error rate (>10%)"
+          description: "5xx ratio is {{ $value | humanizePercentage }} over 5m. Runbook: McpHighErrorRate."
+
+      - alert: McpHighLatencyP95
+        expr: job:mcp_http_latency_p95:5m > 2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "p95 latency > 2s"
+          description: "p95 request latency is {{ $value | humanize }}s over 5m (LLM/Azure slowness?). Runbook: McpHighLatencyP95."
+
+      - alert: McpAzureUpstreamErrors
+        expr: job:mcp_azure_error_ratio:5m > 0.20
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Azure DevOps upstream errors (>20%)"
+          description: "Azure request error ratio is {{ $value | humanizePercentage }}. Check PAT/scopes/Azure status. Runbook: McpAzureUpstreamErrors."
+
+      - alert: McpLlmBudgetNearExhausted
+        expr: (llm_budget_usd{job="mcp-azure-devops"} > 0) and (llm_spend_usd / llm_budget_usd > 0.8)
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "LLM monthly budget >80% used"
+          description: "Monthly LLM spend is over 80% of the configured cap ({{ $value | humanizePercentage }}); the LLM tier will short-circuit when it hits 100%. Runbook: McpLlmBudget."
+
+      - alert: McpLlmBudgetExhausted
+        expr: (llm_budget_usd{job="mcp-azure-devops"} > 0) and (llm_spend_usd >= llm_budget_usd)
+        for: 5m
+        labels: { severity: warning }
+        annotations:
+          summary: "LLM monthly budget exhausted"
+          description: "Spend has reached the cap; classifications fall back to the rule engine (source=BUDGET_CAPPED). Raise LLM_MONTHLY_BUDGET_USD if intended. Runbook: McpLlmBudget."
+
+      - alert: McpHighEventLoopLag
+        expr: nodejs_eventloop_lag_p99_seconds{job="mcp-azure-devops"} > 0.2
+        for: 10m
+        labels: { severity: warning }
+        annotations:
+          summary: "Node event-loop lag p99 > 200ms"
+          description: "Event loop is lagging ({{ $value | humanize }}s) — CPU pressure or blocking work. Consider scaling. Runbook: McpHighEventLoopLag."
