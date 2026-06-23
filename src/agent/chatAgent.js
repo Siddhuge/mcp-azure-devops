@@ -241,3 +241,86 @@ export async function runChat(history) {
     costUsd,
   };
 }
+
+/** Map a provider error to a friendly, non-leaking user message (shared by both paths). */
+function friendlyLlmError(err) {
+  if (err instanceof Anthropic.AuthenticationError) {
+    log.error("anthropic auth rejected (check ANTHROPIC_API_KEY)");
+    return "⚠ The Anthropic API key was rejected (invalid x-api-key). Update ANTHROPIC_API_KEY and try again.";
+  }
+  if (err instanceof Anthropic.RateLimitError) {
+    return "⚠ Anthropic is rate-limiting requests right now. Please retry in a moment.";
+  }
+  if (err instanceof Anthropic.APIError) {
+    log.warn({ status: err.status }, "anthropic api error in chat");
+    return `⚠ The LLM request failed (HTTP ${err.status}). Please try again.`;
+  }
+  log.error({ message: scrubSecrets(String(err?.message || err)) }, "chat agent error");
+  return "⚠ Something went wrong handling that request. Please try again.";
+}
+
+/**
+ * Streaming variant of {@link runChat}. Drives the same tool-use loop but streams
+ * the model's text token-by-token and emits structured events:
+ *   { type: "delta", text }     incremental assistant text
+ *   { type: "tool",  name, input }  a tool the agent is about to run
+ *   { type: "done",  costUsd }   end of the turn
+ * Never throws for provider/budget errors — emits a friendly delta + done.
+ *
+ * @param {Array<{role:"user"|"assistant",content:string}>} history
+ * @param {{ signal?: AbortSignal, onEvent: (e:object)=>void }} opts
+ * @returns {Promise<void>}
+ */
+export async function runChatStream(history, { signal, onEvent }) {
+  if ((await budgetStatus()).exceeded) {
+    onEvent({ type: "delta", text: "The monthly LLM budget has been reached, so chat is paused. Increase LLM_MONTHLY_BUDGET_USD to resume." });
+    onEvent({ type: "done", costUsd: 0 });
+    return;
+  }
+
+  const client = getAnthropicClient();
+  const messages = history.map((m) => ({ role: m.role, content: m.content }));
+  let costUsd = 0;
+
+  for (let i = 0; i < MAX_ITERATIONS; i++) {
+    let message;
+    try {
+      const stream = client.messages.stream(
+        { model: config.llm.model, max_tokens: MAX_OUTPUT_TOKENS, system: SYSTEM_PROMPT, tools: TOOLS, messages },
+        signal ? { signal } : undefined,
+      );
+      stream.on("text", (t) => onEvent({ type: "delta", text: t }));
+      message = await stream.finalMessage();
+    } catch (err) {
+      if (signal && signal.aborted) {
+        onEvent({ type: "done", costUsd, stopped: true });
+        return;
+      }
+      onEvent({ type: "delta", text: friendlyLlmError(err) });
+      onEvent({ type: "done", costUsd });
+      return;
+    }
+
+    const turnCost = estimateCost(message.usage);
+    costUsd += turnCost;
+    await recordSpend(turnCost);
+    messages.push({ role: "assistant", content: message.content });
+
+    if (message.stop_reason !== "tool_use") {
+      onEvent({ type: "done", costUsd });
+      return;
+    }
+
+    const toolUses = message.content.filter((b) => b.type === "tool_use");
+    const results = [];
+    for (const tu of toolUses) {
+      onEvent({ type: "tool", name: tu.name, input: tu.input });
+      const { text, isError } = await executeTool(tu.name, tu.input);
+      results.push({ type: "tool_result", tool_use_id: tu.id, content: text, is_error: isError });
+    }
+    messages.push({ role: "user", content: results });
+  }
+
+  onEvent({ type: "delta", text: "\n\n(stopped after the maximum number of steps)" });
+  onEvent({ type: "done", costUsd });
+}

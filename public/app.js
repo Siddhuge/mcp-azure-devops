@@ -8,8 +8,9 @@ const settingsBtn = document.getElementById("settings");
 const newChatBtn = document.getElementById("newchat");
 
 const TOKEN_KEY = "mcp_azdo_token";
+const HISTORY_KEY = "mcp_azdo_history";
 const MAX_SEND = 30; // sliding window of messages sent each turn (server caps at 40)
-const REQUEST_TIMEOUT_MS = 90_000;
+const REQUEST_TIMEOUT_MS = 120_000;
 
 /** Full conversation; a trailing window is sent each turn (the API is stateless). */
 let history = [];
@@ -34,16 +35,38 @@ settingsBtn.addEventListener("click", () => {
 newChatBtn.addEventListener("click", () => {
   if (inFlight) return;
   history = [];
+  localStorage.removeItem(HISTORY_KEY);
   chat.innerHTML = introHTML;
 });
 
+// ── Persistence ───────────────────────────────────────────────────────────────
+function saveHistory() {
+  try {
+    localStorage.setItem(HISTORY_KEY, JSON.stringify(history.slice(-MAX_SEND * 2)));
+  } catch {
+    /* quota — ignore */
+  }
+}
+function restoreHistory() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(HISTORY_KEY) || "[]");
+    if (Array.isArray(saved) && saved.length) {
+      history = saved;
+      for (const m of history) addMessage(m.role, m.content);
+    }
+  } catch {
+    /* ignore */
+  }
+}
+
 // ── Safe markdown rendering ──────────────────────────────────────────────────
 const esc = (s) => s.replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]);
+const escNl = (s) => esc(s).replace(/\n/g, "<br>");
 
-// Private-use sentinels: placeholders can't collide with real text and pass
-// through HTML-escaping and the markdown regexes untouched.
-const OPEN = "";
-const CLOSE = "";
+// Private-use sentinels (U+E000/U+E001): placeholders can't collide with real
+// text and pass through HTML-escaping and the markdown regexes untouched.
+const OPEN = String.fromCharCode(0xe000);
+const CLOSE = String.fromCharCode(0xe001);
 
 function fmtInline(s) {
   return s
@@ -85,7 +108,7 @@ function renderMarkdown(src) {
     if (blockLine.test(line)) {
       flushList();
       flushPara();
-      html += line; // standalone fenced block (restored below)
+      html += line;
     } else if (/^\s*$/.test(line)) {
       flushList();
       flushPara();
@@ -116,80 +139,165 @@ function renderMarkdown(src) {
 }
 
 // ── Rendering ────────────────────────────────────────────────────────────────
-function addMessage(role, text, tools) {
+function copyButton(getText) {
+  const btn = document.createElement("button");
+  btn.className = "copy";
+  btn.type = "button";
+  btn.textContent = "Copy";
+  btn.setAttribute("aria-label", "Copy message");
+  btn.addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText(getText());
+      btn.textContent = "Copied";
+      setTimeout(() => (btn.textContent = "Copy"), 1200);
+    } catch {
+      btn.textContent = "—";
+    }
+  });
+  return btn;
+}
+
+/**
+ * Create a message bubble. For assistant messages, returns the content element so
+ * a stream can update it; `raw` is the source text used by the copy button.
+ */
+function addMessage(role, text, { tools, cost } = {}) {
   const wrap = document.createElement("div");
   wrap.className = `msg ${role}`;
   const bubble = document.createElement("div");
   bubble.className = "bubble";
-  bubble.innerHTML = role === "user" ? esc(text).replace(/\n/g, "<br>") : renderMarkdown(text);
-  if (tools && tools.length) {
-    const t = document.createElement("div");
-    t.className = "tools";
-    t.textContent = "🔧 " + tools.map((c) => `${c.name}(${JSON.stringify(c.input)})`).join(", ");
-    bubble.appendChild(t);
-  }
+  const content = document.createElement("div");
+  content.className = "content";
+  content.innerHTML = role === "user" ? escNl(text) : renderMarkdown(text);
+  bubble.appendChild(content);
+  if (tools && tools.length) bubble.appendChild(toolTrace(tools));
+  if (typeof cost === "number" && cost > 0) bubble.appendChild(costEl(cost));
+  if (role === "assistant" && text) bubble.appendChild(copyButton(() => content.dataset.raw || text));
+  content.dataset.raw = text || "";
   wrap.appendChild(bubble);
   chat.appendChild(wrap);
   chat.scrollTop = chat.scrollHeight;
-  return bubble;
+  return { wrap, bubble, content };
+}
+
+function toolTrace(tools) {
+  const t = document.createElement("div");
+  t.className = "tools";
+  t.textContent = "🔧 " + tools.map((c) => `${c.name}(${JSON.stringify(c.input)})`).join(", ");
+  return t;
+}
+function costEl(cost) {
+  const c = document.createElement("div");
+  c.className = "tools";
+  c.textContent = `cost: $${cost.toFixed(4)}`;
+  return c;
 }
 
 function setSending(sending) {
   sendBtn.textContent = sending ? "Stop" : "Send";
   sendBtn.classList.toggle("sending", sending);
+  sendBtn.setAttribute("aria-label", sending ? "Stop generating" : "Send message");
 }
 
-// ── Send / cancel ────────────────────────────────────────────────────────────
+// ── SSE frame parsing ──────────────────────────────────────────────────────────
+function parseFrame(frame) {
+  let event = "message";
+  let data = "";
+  for (const line of frame.split("\n")) {
+    if (line.startsWith("event:")) event = line.slice(6).trim();
+    else if (line.startsWith("data:")) data += line.slice(5).trim();
+  }
+  let parsed = {};
+  try {
+    parsed = data ? JSON.parse(data) : {};
+  } catch {
+    /* ignore */
+  }
+  return { event, data: parsed };
+}
+
+// ── Send (streaming) ─────────────────────────────────────────────────────────
 async function send(text) {
   history.push({ role: "user", content: text });
   addMessage("user", text);
+  saveHistory();
 
-  const thinking = addMessage("assistant", "…");
-  thinking.classList.add("typing");
+  const { bubble, content } = addMessage("assistant", "");
+  content.classList.add("streaming");
+  const tools = [];
+  let acc = "";
+  let cost = 0;
+  let gotError = false;
+
   setSending(true);
-
   abortedByUser = false;
   const controller = new AbortController();
   inFlight = controller;
   const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
 
+  const onFrame = ({ event, data }) => {
+    if (event === "delta") {
+      acc += data.text || "";
+      content.innerHTML = escNl(acc); // plain while streaming; markdown on done
+      chat.scrollTop = chat.scrollHeight;
+    } else if (event === "tool") {
+      tools.push({ name: data.name, input: data.input });
+      bubble.querySelector(".tools.live")?.remove();
+      const t = toolTrace(tools);
+      t.classList.add("live");
+      bubble.appendChild(t);
+    } else if (event === "done") {
+      cost = data.costUsd || 0;
+    }
+  };
+
   try {
-    const res = await fetch("/chat", {
+    const res = await fetch("/chat/stream", {
       method: "POST",
-      headers: { "Content-Type": "application/json", Authorization: "Bearer " + getToken() },
+      headers: { "Content-Type": "application/json", Accept: "text/event-stream", Authorization: "Bearer " + getToken() },
       body: JSON.stringify({ messages: history.slice(-MAX_SEND) }),
       signal: controller.signal,
     });
-    const data = await res.json();
-    thinking.parentElement.remove();
 
-    if (!res.ok) {
-      const msg = (data && data.error && data.error.message) || `Request failed (${res.status})`;
-      addMessage("assistant", "⚠ " + msg).classList.add("error");
+    if (!res.ok || !res.body) {
+      gotError = true;
+      const d = await res.json().catch(() => ({}));
+      acc = "⚠ " + ((d.error && d.error.message) || `Request failed (${res.status})`);
       if (res.status === 401) localStorage.removeItem(TOKEN_KEY);
-      return;
+    } else {
+      const reader = res.body.getReader();
+      const dec = new TextDecoder();
+      let buf = "";
+      for (;;) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        buf += dec.decode(value, { stream: true });
+        let idx;
+        while ((idx = buf.indexOf("\n\n")) >= 0) {
+          onFrame(parseFrame(buf.slice(0, idx)));
+          buf = buf.slice(idx + 2);
+        }
+      }
+      if (buf.trim()) onFrame(parseFrame(buf));
     }
-
-    history.push({ role: "assistant", content: data.reply });
-    const bubble = addMessage("assistant", data.reply, data.toolCalls);
-    if (typeof data.costUsd === "number" && data.costUsd > 0) {
-      const c = document.createElement("div");
-      c.className = "tools";
-      c.textContent = `cost: $${data.costUsd.toFixed(4)}`;
-      bubble.appendChild(c);
-    }
-  } catch {
-    thinking.parentElement.remove();
-    const msg = abortedByUser
-      ? "⏹ Stopped."
-      : controller.signal.aborted
-        ? "⚠ Request timed out — try again or narrow the question."
-        : "⚠ Could not reach the server. Is it running?";
-    addMessage("assistant", msg).classList.add("error");
+  } catch (err) {
+    gotError = true;
+    acc = abortedByUser ? (acc || "") + " ⏹ Stopped." : "⚠ Could not reach the server. Is it running?";
   } finally {
     clearTimeout(timer);
     inFlight = null;
     setSending(false);
+    // Finalize: full markdown render + copy button + cost.
+    content.classList.remove("streaming");
+    content.innerHTML = renderMarkdown(acc || "(no response)");
+    content.dataset.raw = acc;
+    bubble.querySelector(".tools.live")?.classList.remove("live");
+    if (cost > 0) bubble.appendChild(costEl(cost));
+    if (!gotError) bubble.appendChild(copyButton(() => acc));
+    if (!gotError && acc) {
+      history.push({ role: "assistant", content: acc });
+      saveHistory();
+    }
     input.focus();
   }
 }
@@ -224,5 +332,6 @@ input.addEventListener("input", () => {
   input.style.height = Math.min(input.scrollHeight, 160) + "px";
 });
 
+restoreHistory();
 getToken();
 input.focus();

@@ -93,6 +93,29 @@ main {
 .bubble a { color: var(--accent); }
 .bubble strong { color: #fff; }
 .typing { color: var(--muted); font-style: italic; }
+/* Streaming caret on the live assistant bubble */
+.content.streaming::after {
+  content: "▍";
+  color: var(--accent);
+  animation: blink 1s step-start infinite;
+}
+@keyframes blink { 50% { opacity: 0; } }
+/* Copy button */
+.bubble { position: relative; }
+.copy {
+  margin-top: 6px;
+  background: transparent;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: pointer;
+}
+.copy:hover { color: var(--text); }
+@media (prefers-reduced-motion: reduce) {
+  .content.streaming::after { animation: none; }
+}
 form#composer {
   display: flex;
   gap: 10px;
