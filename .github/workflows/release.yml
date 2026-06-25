@@ -1,10 +1,16 @@
 name: Release
 
-# Build, push, and SIGN the image on a version tag (e.g. v3.1.0). Signing is
-# Cosign "keyless": no long-lived keys — identity comes from the GitHub OIDC
-# token (id-token: write) and the signature/attestation go to the Sigstore
-# transparency log + the registry. Verify with:
-#   cosign verify ghcr.io/<owner>/<repo>:<tag> \
+# Build, push to Docker Hub, and SIGN the image on a version tag (e.g. v3.1.0).
+# Signing is Cosign "keyless": no long-lived keys — identity comes from the
+# GitHub OIDC token (id-token: write) and the signature/attestation go to the
+# Sigstore transparency log + the registry.
+#
+# Required repo secrets (Settings → Secrets and variables → Actions):
+#   DOCKERHUB_USERNAME  — your Docker Hub username (also used as the namespace)
+#   DOCKERHUB_TOKEN     — a Docker Hub access token (Account Settings → Security)
+#
+# Verify a published image:
+#   cosign verify docker.io/<user>/mcp-azure-devops:<tag> \
 #     --certificate-identity-regexp "https://github.com/<owner>/<repo>/.github/workflows/release.yml@.*" \
 #     --certificate-oidc-issuer https://token.actions.githubusercontent.com
 on:
@@ -13,12 +19,7 @@ on:
 
 permissions:
   contents: read
-  packages: write # push to GHCR
   id-token: write # Cosign keyless (OIDC)
-
-env:
-  REGISTRY: ghcr.io
-  IMAGE: ghcr.io/${{ github.repository }}
 
 jobs:
   release:
@@ -26,18 +27,24 @@ jobs:
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4
 
-      - name: Log in to GHCR
+      # Image repo on Docker Hub: <namespace>/mcp-azure-devops. Set via $GITHUB_ENV
+      # so the secret is usable in later steps (env.IMAGE).
+      - name: Resolve image name
+        run: echo "IMAGE=docker.io/${{ secrets.DOCKERHUB_USERNAME }}/mcp-azure-devops" >> "$GITHUB_ENV"
+
+      - name: Log in to Docker Hub
         uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
-          registry: ${{ env.REGISTRY }}
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
 
       - name: Image metadata (tags/labels)
         id: meta
         uses: docker/metadata-action@c299e40c65443455700f0fdfc63efafe5b349051 # v5
         with:
           images: ${{ env.IMAGE }}
+          # semver tag (e.g. 3.1.0) + a short SHA tag; `latest` is added
+          # automatically for semver tags (flavor latest=auto, the default).
           tags: |
             type=semver,pattern={{version}}
             type=sha
