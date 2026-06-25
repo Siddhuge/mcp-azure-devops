@@ -218,11 +218,29 @@ All build tools accept an optional `project` (defaults to `AZURE_PROJECT`).
 | Concern | How |
 |---------|-----|
 | **Identity & authz** | Service tokens + OIDC/JWT (above); per-identity audit + rate limits |
-| **Metrics** | `GET /metrics` (Prometheus): `http_request_duration_seconds`, `classification_total{source}`, `llm_cost_usd_total`, `llm_spend_usd`, `azure_requests_total`, Node defaults. Optional `METRICS_TOKEN`. |
+| **Metrics + dashboards** | `GET /metrics` (Prometheus): `http_request_duration_seconds`, `classification_total{source}`, `llm_cost_usd_total`, `llm_spend_usd`, `azure_requests_total`, Node defaults. Optional `METRICS_TOKEN`. A ready Grafana dashboard + Prometheus alert/recording rules live in [`deploy/observability/`](deploy/observability/) — test them locally with the bundled stack (below). |
 | **Audit log** | One structured JSON line per action (`event:"audit"`) with actor, action, target, source, cost, requestId — ship stdout to your SIEM |
 | **Shared state / scale** | `REDIS_URL` shares the cache + LLM budget across replicas (compose wires Redis). `/readyz` reports the backend. |
+| **Rate limits** | Per-IP + per-identity, tunable via `RATE_LIMIT_GLOBAL_MAX` / `RATE_LIMIT_IDENTITY_MAX` / `RATE_LIMIT_EXPENSIVE_MAX` (per `RATE_LIMIT_WINDOW_MS`). Excess load is shed with `429` (verified under load — see below). |
 | **Data governance** | LLM-egress redaction (`LLM_REDACT_INPUT`); the rule-engine + cache tiers never call out |
-| **Supply chain** | CI gates on `npm audit --omit=dev --audit-level=high` (production deps: **0 known vulns**) and a **Trivy** image scan (HIGH/CRITICAL). Remaining advisories are dev-only test tooling (vitest/vite/esbuild) and are not shipped in the image. |
+| **Supply chain** | CI gates on `npm audit --omit=dev` and a **Trivy** scan (HIGH/CRITICAL); all GitHub Actions are **pinned by commit SHA**. A tag push (`v*.*.*`) runs [`release.yml`](.github/workflows/release.yml): build → push to GHCR → **Cosign keyless signature** + **CycloneDX SBOM attestation**. Verify with `cosign verify … --certificate-oidc-issuer https://token.actions.githubusercontent.com`. |
+
+### Test the monitoring dashboards locally
+```bash
+docker compose up -d --build                                              # app + Redis
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d prometheus grafana
+# Grafana  → http://localhost:3000/d/mcp-azure-devops  (anonymous, dashboard auto-loaded)
+# Prometheus → http://localhost:9090/targets  (scrapes the app's /metrics)
+```
+
+### Load test
+A k6 script ([`tests/load/k6-smoke.js`](tests/load/k6-smoke.js)) drives the cheap paths under concurrency and **fails on any 5xx**; `429` is treated as expected load-shedding.
+```bash
+docker run --rm --network host -e BASE_URL=http://localhost:4000 \
+  -e TOKEN=<service-token> -e PROJECT=<project> -v "$PWD/tests/load:/scripts" \
+  grafana/k6 run /scripts/k6-smoke.js
+# Verified: 0% 5xx under 10 VUs; p95 of served requests ~330ms; excess shed as 429.
+```
 
 > Reaching a fully certified enterprise deployment still requires *your* infra: connect your IdP (`OIDC_*`), mount real secrets (`*_FILE`), scrape `/metrics` + ship the audit log to your monitoring/SIEM, set SLOs/alerts, and run a security review. The code supports all of this; it can't self-certify.
 
