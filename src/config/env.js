@@ -32,6 +32,12 @@ const schema = Joi.object({
   // rate-limiting work correctly. 0 = don't trust any proxy.
   TRUST_PROXY: Joi.number().integer().min(0).default(0),
 
+  // Rate limits (requests per window). Tune per expected load/deployment.
+  RATE_LIMIT_WINDOW_MS: Joi.number().integer().min(1000).default(60 * 1000),
+  RATE_LIMIT_GLOBAL_MAX: Joi.number().integer().min(1).default(300), // per-IP, whole surface
+  RATE_LIMIT_IDENTITY_MAX: Joi.number().integer().min(1).default(120), // per-identity, normal API
+  RATE_LIMIT_EXPENSIVE_MAX: Joi.number().integer().min(1).default(30), // per-identity, chat/classify
+
   // OIDC/JWT auth (any IdP — Entra ID, Okta, Auth0…). Enabled when OIDC_ISSUER set.
   OIDC_ISSUER: Joi.string().allow("").default(""),
   OIDC_JWKS_URL: Joi.string().allow("").default(""), // optional; derived from issuer if blank
@@ -103,6 +109,12 @@ export const config = Object.freeze({
   logLevel: value.LOG_LEVEL,
   port: value.PORT,
   trustProxy: value.TRUST_PROXY,
+  rateLimit: Object.freeze({
+    windowMs: value.RATE_LIMIT_WINDOW_MS,
+    globalMax: value.RATE_LIMIT_GLOBAL_MAX,
+    identityMax: value.RATE_LIMIT_IDENTITY_MAX,
+    expensiveMax: value.RATE_LIMIT_EXPENSIVE_MAX,
+  }),
   azure: Object.freeze({
     org: value.AZURE_ORG,
     defaultProject: value.AZURE_PROJECT,

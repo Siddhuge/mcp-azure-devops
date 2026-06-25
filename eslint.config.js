@@ -34,6 +34,15 @@ export default [
     },
   },
   {
+    // k6 load scripts run in the k6 JS runtime (not Node) — allow its globals.
+    files: ["tests/load/**/*.js"],
+    languageOptions: {
+      ecmaVersion: 2022,
+      sourceType: "module",
+      globals: { __ENV: "readonly", __VU: "readonly", __ITER: "readonly" },
+    },
+  },
+  {
     ignores: ["node_modules/", "coverage/", "dist/", "public/"],
   },
 ];
