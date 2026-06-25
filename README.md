@@ -228,9 +228,11 @@ All build tools accept an optional `project` (defaults to `AZURE_PROJECT`).
 ### Test the monitoring dashboards locally
 ```bash
 docker compose up -d --build                                              # app + Redis
-docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d prometheus grafana
-# Grafana  → http://localhost:3000/d/mcp-azure-devops  (anonymous, dashboard auto-loaded)
-# Prometheus → http://localhost:9090/targets  (scrapes the app's /metrics)
+docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d prometheus grafana alertmanager
+# Grafana      → http://localhost:3000/d/mcp-azure-devops  (anonymous, dashboard auto-loaded)
+# Prometheus   → http://localhost:9090/targets  (scrapes the app's /metrics)
+# Alertmanager → http://localhost:9093  (routing template in deploy/observability/alertmanager.yml —
+#                replace the Slack/PagerDuty placeholders to deliver)
 ```
 
 ### Load test

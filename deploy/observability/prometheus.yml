@@ -6,6 +6,12 @@ global:
 rule_files:
   - /etc/prometheus/alerts.yaml
 
+# Send firing alerts to Alertmanager (the local observability stack runs one).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
 scrape_configs:
   # Job label MUST be "mcp-azure-devops" — the dashboard panels and alert rules
   # filter on job="mcp-azure-devops".
