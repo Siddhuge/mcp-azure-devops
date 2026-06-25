@@ -27,12 +27,23 @@ export function __setKeyResolver(resolver) {
   _jwks = resolver;
 }
 
-/** Parse the `scope` (space-delimited) and/or `scp`/`roles` claims into a set. */
+/**
+ * Collect a scope/role claim that may be either a space-delimited string or an
+ * array, into `out`. Entra v2 delivers delegated scopes in `scp` as a STRING
+ * (e.g. "access_as_user"); OAuth uses `scope` (string); app roles use `roles`
+ * (array). Handle all shapes so enforcement works across IdPs.
+ */
+function addClaim(out, val) {
+  if (typeof val === "string") val.split(/\s+/).forEach((s) => s && out.add(s));
+  else if (Array.isArray(val)) val.forEach((s) => typeof s === "string" && s && out.add(s));
+}
+
+/** Parse `scope` / `scp` / `roles` (string or array) into a set of granted scopes. */
 function extractScopes(payload) {
   const out = new Set();
-  if (typeof payload.scope === "string") payload.scope.split(/\s+/).forEach((s) => s && out.add(s));
-  if (Array.isArray(payload.scp)) payload.scp.forEach((s) => out.add(s));
-  if (Array.isArray(payload.roles)) payload.roles.forEach((s) => out.add(s));
+  addClaim(out, payload.scope);
+  addClaim(out, payload.scp);
+  addClaim(out, payload.roles);
   return out;
 }
 

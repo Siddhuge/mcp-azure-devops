@@ -93,6 +93,32 @@ describe("auth", () => {
     expect(res.status).toBe(403);
     expect(res.body.error.code).toBe("FORBIDDEN");
   });
+
+  // Entra v2 delivers delegated scopes in `scp` as a space-delimited STRING.
+  it("accepts an Entra-shaped token (scp string) carrying the required scope", async () => {
+    projectsNock();
+    const jwt = await new SignJWT({ scp: "access_as_user pipelines.read", email: "user@example.com" })
+      .setProtectedHeader({ alg: "RS256" })
+      .setIssuer("https://issuer.test/")
+      .setAudience("mcp-azure-devops")
+      .setSubject("u")
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    const res = await request(app).get("/projects").set("Authorization", `Bearer ${jwt}`);
+    expect(res.status).toBe(200);
+  });
+
+  it("forbids an Entra-shaped token (scp string) missing the required scope (403)", async () => {
+    const jwt = await new SignJWT({ scp: "User.Read" })
+      .setProtectedHeader({ alg: "RS256" })
+      .setIssuer("https://issuer.test/")
+      .setAudience("mcp-azure-devops")
+      .setSubject("u")
+      .setExpirationTime("5m")
+      .sign(privateKey);
+    const res = await request(app).get("/projects").set("Authorization", `Bearer ${jwt}`);
+    expect(res.status).toBe(403);
+  });
 });
 
 describe("/metrics", () => {
