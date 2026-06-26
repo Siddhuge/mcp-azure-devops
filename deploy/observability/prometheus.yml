@@ -1,0 +1,21 @@
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+# Recording + alerting rules shipped alongside this file.
+rule_files:
+  - /etc/prometheus/alerts.yaml
+
+# Send firing alerts to Alertmanager (the local observability stack runs one).
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets: ["alertmanager:9093"]
+
+scrape_configs:
+  # Job label MUST be "mcp-azure-devops" — the dashboard panels and alert rules
+  # filter on job="mcp-azure-devops".
+  - job_name: mcp-azure-devops
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mcp-azure-devops:4000"] # compose service name on the shared network

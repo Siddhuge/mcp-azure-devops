@@ -1,0 +1,12 @@
+# gitleaks config for mcp-azure-devops.
+# Start from gitleaks' built-in rules, then allowlist deliberate test fixtures.
+title = "mcp-azure-devops gitleaks"
+
+[extend]
+useDefault = true
+
+[allowlist]
+description = "Deliberate fake secrets used to test the redaction/scrubbing logic"
+paths = [
+  '''tests/unit/scrub\.test\.js''',
+]

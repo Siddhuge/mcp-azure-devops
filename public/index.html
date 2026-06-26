@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Azure DevOps Pipeline Assistant</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header>
+      <h1>Azure DevOps Pipeline Assistant</h1>
+      <div class="actions">
+        <button id="newchat" title="Start a new conversation" aria-label="Start a new conversation">＋ New chat</button>
+        <button id="settings" title="Change API token" aria-label="Change API token">⚙︎ Token</button>
+      </div>
+    </header>
+
+    <main id="chat" aria-live="polite" aria-label="Conversation" role="log">
+      <div class="msg assistant">
+        <div class="bubble">
+          Hi! Ask me about your Azure DevOps pipelines — e.g.
+          <em>“list my projects”</em>, <em>“show recent failed builds in AzureBlueGreen”</em>,
+          or <em>“analyze build 318 in AzureCanary”</em>.
+        </div>
+      </div>
+    </main>
+
+    <form id="composer">
+      <textarea id="input" rows="1" placeholder="Ask about a build, project, or failure…" autocomplete="off" aria-label="Message"></textarea>
+      <button id="send" type="submit" aria-label="Send message">Send</button>
+    </form>
+
+    <script src="auth.js"></script>
+    <script src="app.js"></script>
+  </body>
+</html>

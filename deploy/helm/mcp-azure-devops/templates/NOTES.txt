@@ -1,0 +1,22 @@
+{{ include "app.fullname" . }} deployed.
+
+Image:    {{ include "app.image" . }}
+Replicas: {{ if .Values.autoscaling.enabled }}HPA {{ .Values.autoscaling.minReplicas }}-{{ .Values.autoscaling.maxReplicas }}{{ else }}{{ .Values.replicaCount }}{{ end }}
+Store:    {{ if (include "app.redisUrl" .) }}Redis ({{ include "app.redisUrl" . }}){{ else }}in-process (single-instance only — set redis.enabled or redisUrl for >1 replica){{ end }}
+OIDC:     {{ if .Values.config.OIDC_ISSUER }}enabled ({{ .Values.config.OIDC_ISSUER }}){{ else }}disabled (service tokens only){{ end }}
+
+Port-forward to try it:
+  kubectl -n {{ .Release.Namespace }} port-forward svc/{{ include "app.fullname" . }} 4000:{{ .Values.service.port }}
+  curl -s http://localhost:4000/readyz | jq
+
+{{- if and .Values.secrets.create (not .Values.secrets.existingSecret) }}
+
+⚠  Secrets were rendered into a Helm-managed Secret. For production, set
+   secrets.create=false and provide secrets.existingSecret (external-secrets
+   operator / CSI / sealed-secrets) so credentials never live in the release.
+{{- end }}
+{{- if and (gt (int .Values.replicaCount) 1) (not (include "app.redisUrl" .)) (not .Values.autoscaling.enabled) }}
+
+⚠  replicaCount > 1 without Redis: the LLM budget cap and cache are per-pod.
+   Enable redis.enabled or set redisUrl for a shared, durable budget.
+{{- end }}

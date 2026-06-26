@@ -1,0 +1,11 @@
+apiVersion: v2
+name: mcp-azure-devops
+description: MCP server for Azure DevOps pipeline failure analysis (tiered rule engine + Claude Haiku)
+type: application
+version: 0.1.0
+appVersion: "3.0.0"
+home: https://github.com/Siddhuge/mcp-azure-devops
+sources:
+  - https://github.com/Siddhuge/mcp-azure-devops
+maintainers:
+  - name: Siddhuge

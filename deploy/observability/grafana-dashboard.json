@@ -1,0 +1,141 @@
+{
+  "title": "MCP Azure DevOps",
+  "uid": "mcp-azure-devops",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "tags": ["mcp", "azure-devops"],
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "30s",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "type": "datasource",
+        "query": "prometheus",
+        "current": {}
+      },
+      {
+        "name": "job",
+        "type": "query",
+        "datasource": { "type": "prometheus", "uid": "${datasource}" },
+        "query": "label_values(http_requests_total, job)",
+        "current": { "text": "mcp-azure-devops", "value": "mcp-azure-devops" },
+        "refresh": 2
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Request rate by status",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 0 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (status) (rate(http_requests_total{job=\"$job\"}[5m]))", "legendFormat": "{{status}}" }
+      ]
+    },
+    {
+      "id": 2,
+      "title": "5xx error ratio",
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.05 },
+            { "color": "red", "value": 0.1 }
+          ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "sum(rate(http_requests_total{job=\"$job\",status=~\"5..\"}[5m])) / clamp_min(sum(rate(http_requests_total{job=\"$job\"}[5m])), 1)", "legendFormat": "5xx ratio" }
+      ]
+    },
+    {
+      "id": 3,
+      "title": "LLM monthly spend vs budget",
+      "type": "gauge",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 0 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "currencyUSD",
+          "thresholds": { "mode": "absolute", "steps": [
+            { "color": "green", "value": null },
+            { "color": "yellow", "value": 0.8 },
+            { "color": "red", "value": 1 }
+          ] }
+        },
+        "overrides": []
+      },
+      "targets": [
+        { "expr": "llm_spend_usd{job=\"$job\"} / clamp_min(llm_budget_usd{job=\"$job\"}, 1)", "legendFormat": "fraction used" }
+      ]
+    },
+    {
+      "id": 4,
+      "title": "Request latency (p50/p95/p99)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "s" }, "overrides": [] },
+      "targets": [
+        { "expr": "histogram_quantile(0.5, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"$job\"}[5m])))", "legendFormat": "p50" },
+        { "expr": "histogram_quantile(0.95, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"$job\"}[5m])))", "legendFormat": "p95" },
+        { "expr": "histogram_quantile(0.99, sum by (le) (rate(http_request_duration_seconds_bucket{job=\"$job\"}[5m])))", "legendFormat": "p99" }
+      ]
+    },
+    {
+      "id": 5,
+      "title": "Classifications by tier/source",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 8 },
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (source) (rate(classification_total{job=\"$job\"}[5m]))", "legendFormat": "{{source}}" }
+      ]
+    },
+    {
+      "id": 6,
+      "title": "Azure requests (success/error)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "reqps" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum by (outcome) (rate(azure_requests_total{job=\"$job\"}[5m]))", "legendFormat": "{{outcome}}" }
+      ]
+    },
+    {
+      "id": 7,
+      "title": "LLM cost rate ($/hr)",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 6, "x": 12, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "currencyUSD" }, "overrides": [] },
+      "targets": [
+        { "expr": "sum(rate(llm_cost_usd_total{job=\"$job\"}[5m])) * 3600", "legendFormat": "$/hr" }
+      ]
+    },
+    {
+      "id": 8,
+      "title": "Resident memory / heap",
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "${datasource}" },
+      "gridPos": { "h": 8, "w": 6, "x": 18, "y": 16 },
+      "fieldConfig": { "defaults": { "unit": "bytes" }, "overrides": [] },
+      "targets": [
+        { "expr": "process_resident_memory_bytes{job=\"$job\"}", "legendFormat": "rss {{instance}}" },
+        { "expr": "nodejs_heap_size_used_bytes{job=\"$job\"}", "legendFormat": "heap used {{instance}}" }
+      ]
+    }
+  ]
+}

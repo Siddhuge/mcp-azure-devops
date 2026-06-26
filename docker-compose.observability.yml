@@ -1,0 +1,46 @@
+# Local Prometheus + Grafana to TEST the dashboards/alerts in deploy/observability/.
+# Run together with the app compose so they share the project's default network:
+#   docker compose -f docker-compose.yml -f docker-compose.observability.yml up -d prometheus grafana
+# Then open Grafana at http://localhost:3000 (anonymous, dashboard auto-loaded)
+# and Prometheus at http://localhost:9090 . Tear down: add `down` to the same -f args.
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    container_name: mcp-prometheus
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+    volumes:
+      - ./deploy/observability/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./deploy/observability/alerts.yaml:/etc/prometheus/alerts.yaml:ro
+    ports:
+      - "9090:9090"
+    restart: unless-stopped
+
+  alertmanager:
+    image: prom/alertmanager:latest
+    container_name: mcp-alertmanager
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+    volumes:
+      - ./deploy/observability/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+    ports:
+      - "9093:9093"
+    restart: unless-stopped
+
+  grafana:
+    image: grafana/grafana:latest
+    container_name: mcp-grafana
+    environment:
+      # Anonymous Admin so you can open it without a login for local testing.
+      GF_AUTH_ANONYMOUS_ENABLED: "true"
+      GF_AUTH_ANONYMOUS_ORG_ROLE: Admin
+      GF_SECURITY_ADMIN_PASSWORD: admin
+      GF_USERS_DEFAULT_THEME: dark
+    volumes:
+      - ./deploy/observability/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./deploy/observability/grafana-dashboard.json:/var/lib/grafana/dashboards/mcp.json:ro
+    ports:
+      - "3000:3000"
+    depends_on:
+      - prometheus
+    restart: unless-stopped

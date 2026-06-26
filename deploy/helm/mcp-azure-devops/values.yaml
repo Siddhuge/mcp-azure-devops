@@ -1,0 +1,139 @@
+# Default values for mcp-azure-devops.
+
+replicaCount: 2
+
+image:
+  repository: mcp-azure-devops
+  tag: "3.0.0"
+  # Pin by digest for immutable deploys (overrides tag when set), e.g.:
+  # digest: "sha256:..."
+  digest: ""
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+service:
+  type: ClusterIP
+  port: 80
+  targetPort: 4000
+
+# Ingress + TLS. Enable and point at your ingress controller; use cert-manager
+# (annotation below) or a pre-created TLS secret for HTTPS — required for the
+# OIDC browser redirect in production.
+ingress:
+  enabled: false
+  className: "" # e.g. nginx
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: mcp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: mcp-tls          # cert-manager fills this, or pre-create it
+    #   hosts: [mcp.example.com]
+
+# Non-secret configuration -> injected as env (ConfigMap).
+config:
+  NODE_ENV: production
+  LOG_LEVEL: info
+  PORT: "4000"
+  TRUST_PROXY: "1" # behind an ingress/LB
+  RATE_LIMIT_GLOBAL_MAX: "300"
+  RATE_LIMIT_IDENTITY_MAX: "120"
+  RATE_LIMIT_EXPENSIVE_MAX: "30"
+  AZURE_ORG: ""
+  AZURE_PROJECT: ""
+  AZURE_MAX_CONCURRENCY: "6"
+  LLM_ENABLED: "false"
+  LLM_MODEL: claude-haiku-4-5
+  LLM_MONTHLY_BUDGET_USD: "25"
+  LLM_REDACT_INPUT: "true"
+  # OIDC (optional; set OIDC_ISSUER to enable JWT auth alongside service tokens)
+  OIDC_ISSUER: ""
+  OIDC_AUDIENCE: ""
+  OIDC_JWKS_URL: ""
+  OIDC_REQUIRED_SCOPE: ""
+  OIDC_CLIENT_ID: "" # public SPA client id → enables browser PKCE login in /ui
+  OIDC_SCOPES: "openid profile"
+
+# External Secrets Operator integration (recommended for prod): pull AZURE_PAT,
+# ANTHROPIC_API_KEY, API_TOKENS, METRICS_TOKEN from your secret store. When
+# enabled, the inline `secrets` block below is NOT rendered (ESO owns the Secret).
+# Alternatively use sealed-secrets/SOPS: create the Secret out-of-band and set
+# secrets.existingSecret to its name (no flag here needed).
+externalSecrets:
+  enabled: false
+  refreshInterval: 1h
+  secretStoreRef:
+    name: "" # your (Cluster)SecretStore, e.g. aws-sm / vault / azure-kv
+    kind: SecretStore # or ClusterSecretStore
+  data:
+    - { secretKey: AZURE_PAT, remoteKey: mcp/azure-pat }
+    - { secretKey: ANTHROPIC_API_KEY, remoteKey: mcp/anthropic-key }
+    - { secretKey: API_TOKENS, remoteKey: mcp/api-tokens }
+    # - { secretKey: METRICS_TOKEN, remoteKey: mcp/metrics-token }
+
+# Secrets. For production, leave these empty and provide the Secret out-of-band
+# (existingSecret) via an external-secrets operator / CSI driver / sealed-secrets.
+secrets:
+  # Name of a pre-existing Secret with keys AZURE_PAT, ANTHROPIC_API_KEY,
+  # API_TOKENS (and optionally METRICS_TOKEN). Takes precedence when set.
+  existingSecret: ""
+  # Inline values (dev/test only — discouraged for prod; they land in the release).
+  create: true
+  data:
+    AZURE_PAT: ""
+    ANTHROPIC_API_KEY: ""
+    API_TOKENS: "" # "name:secret,name2:secret2"
+    METRICS_TOKEN: ""
+
+resources:
+  requests:
+    cpu: 100m
+    memory: 128Mi
+  limits:
+    cpu: "1"
+    memory: 384Mi
+
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 10
+  targetCPUUtilizationPercentage: 70
+  targetMemoryUtilizationPercentage: 80
+
+pdb:
+  enabled: true
+  minAvailable: 1
+
+# Bundled Redis (single replica) for non-prod. In prod, disable this and point
+# config.REDIS_URL (below) at a managed/HA Redis.
+redis:
+  enabled: false
+  image: redis:7-alpine
+# External/managed Redis URL (used when redis.enabled is false). Empty = in-process store.
+redisUrl: ""
+
+networkPolicy:
+  enabled: false
+  # Namespace label selector allowed to reach the service (e.g. ingress controller).
+  ingressNamespaceLabel: { kubernetes.io/metadata.name: ingress-nginx }
+
+metrics:
+  serviceMonitor:
+    enabled: false # requires the Prometheus Operator CRDs
+    interval: 30s
+    # If METRICS_TOKEN is set in secrets, the ServiceMonitor sends it as a bearer.
+  prometheusRule:
+    enabled: false # requires the Prometheus Operator CRDs; ships alert+recording rules
+    labels: {} # e.g. { release: kube-prometheus-stack } so your Prometheus selects it
+
+podAnnotations: {}
+nodeSelector: {}
+tolerations: []
+affinity: {}
