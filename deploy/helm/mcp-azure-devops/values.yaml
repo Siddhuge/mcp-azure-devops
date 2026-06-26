@@ -19,6 +19,24 @@ service:
   port: 80
   targetPort: 4000
 
+# Ingress + TLS. Enable and point at your ingress controller; use cert-manager
+# (annotation below) or a pre-created TLS secret for HTTPS — required for the
+# OIDC browser redirect in production.
+ingress:
+  enabled: false
+  className: "" # e.g. nginx
+  annotations: {}
+    # cert-manager.io/cluster-issuer: letsencrypt-prod
+    # nginx.ingress.kubernetes.io/ssl-redirect: "true"
+  hosts:
+    - host: mcp.example.com
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+    # - secretName: mcp-tls          # cert-manager fills this, or pre-create it
+    #   hosts: [mcp.example.com]
+
 # Non-secret configuration -> injected as env (ConfigMap).
 config:
   NODE_ENV: production
@@ -42,6 +60,23 @@ config:
   OIDC_REQUIRED_SCOPE: ""
   OIDC_CLIENT_ID: "" # public SPA client id → enables browser PKCE login in /ui
   OIDC_SCOPES: "openid profile"
+
+# External Secrets Operator integration (recommended for prod): pull AZURE_PAT,
+# ANTHROPIC_API_KEY, API_TOKENS, METRICS_TOKEN from your secret store. When
+# enabled, the inline `secrets` block below is NOT rendered (ESO owns the Secret).
+# Alternatively use sealed-secrets/SOPS: create the Secret out-of-band and set
+# secrets.existingSecret to its name (no flag here needed).
+externalSecrets:
+  enabled: false
+  refreshInterval: 1h
+  secretStoreRef:
+    name: "" # your (Cluster)SecretStore, e.g. aws-sm / vault / azure-kv
+    kind: SecretStore # or ClusterSecretStore
+  data:
+    - { secretKey: AZURE_PAT, remoteKey: mcp/azure-pat }
+    - { secretKey: ANTHROPIC_API_KEY, remoteKey: mcp/anthropic-key }
+    - { secretKey: API_TOKENS, remoteKey: mcp/api-tokens }
+    # - { secretKey: METRICS_TOKEN, remoteKey: mcp/metrics-token }
 
 # Secrets. For production, leave these empty and provide the Secret out-of-band
 # (existingSecret) via an external-secrets operator / CSI driver / sealed-secrets.
