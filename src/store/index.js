@@ -73,6 +73,8 @@ function createRedisStore(redis) {
   const budgetKey = (m) => `budget:${m}`;
   return {
     backend: "redis",
+    client: redis, // exposed for the shared rate-limit store
+
     async cacheGet(key) {
       try {
         const raw = await redis.get(cacheKey(key));
@@ -161,6 +163,16 @@ export function getStore() {
     _store = createMemoryStore();
   }
   return _store;
+}
+
+/**
+ * The shared ioredis client when REDIS_URL is set, else null. Used by the
+ * rate limiter to enforce limits globally across replicas (not per-process).
+ * @returns {import("ioredis").Redis | null}
+ */
+export function getRedisClient() {
+  const s = getStore();
+  return s.backend === "redis" ? s.client : null;
 }
 
 /** Test seam: drop the singleton so a fresh store is created next call. */

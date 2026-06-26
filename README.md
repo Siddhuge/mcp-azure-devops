@@ -333,7 +333,11 @@ The base image is pinned by digest for reproducible builds, and a CycloneDX SBOM
 
 ## Deploy to Kubernetes (Helm)
 
-A hardened, vendor-neutral Helm chart is in [`deploy/helm/mcp-azure-devops`](deploy/helm/mcp-azure-devops) — liveness/readiness probes, non-root/read-only/seccomp pod security, resource limits, optional HPA, PodDisruptionBudget, NetworkPolicy, Prometheus `ServiceMonitor`, secrets-as-files (`*_FILE`), and an optional bundled Redis (use managed Redis in prod).
+A hardened, vendor-neutral Helm chart is in [`deploy/helm/mcp-azure-devops`](deploy/helm/mcp-azure-devops) — liveness/readiness probes, non-root/read-only/seccomp pod security, resource limits, optional HPA, PodDisruptionBudget, NetworkPolicy, Prometheus `ServiceMonitor`, **Ingress + TLS** (`ingress.enabled`, cert-manager-ready), secrets-as-files (`*_FILE`), and an optional bundled Redis (use managed Redis in prod).
+
+**Secrets in prod:** prefer the **External Secrets Operator** (`externalSecrets.enabled=true` + a `secretStoreRef` for AWS SM / Vault / Azure KV / GCP SM) or sealed-secrets/SOPS (create the Secret out-of-band and set `secrets.existingSecret`). The inline `secrets` block is for dev only.
+
+**Rate limits are global** when `redis.enabled` (or an external `redisUrl`) is set — the limiter shares counters across replicas via Redis, so `RATE_LIMIT_*` caps are cluster-wide, not per-pod. Without Redis they fall back to per-process (single-instance only).
 
 ```bash
 helm upgrade --install mcp deploy/helm/mcp-azure-devops -n mcp --create-namespace \
